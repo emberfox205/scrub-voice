@@ -1,4 +1,5 @@
 import os 
+from pathlib import Path
 import numpy as np
 import scipy.io.wavfile as wav
 import matplotlib.pyplot as plt
@@ -7,7 +8,12 @@ from scipy.signal import find_peaks
 # ==========================================
 # SETUP & ARRAY GEOMETRY
 # ==========================================
-DATA_FOLDER = "/Users/DELL/Documents/RESEARCH/ResearchWithTeo/direction_60_120_0_0SNR_0Diffuse"
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = BASE_DIR / "data" / "dsp"
+DATA_FOLDER = DATA_DIR / "direction_60_120_0_-10SNR_-10Diffuse"
+OUTPUT_FOLDER = DATA_DIR / "output"
+OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
 
 RADIUS = 0.04          # 4 cm radius
 SPEED_OF_SOUND = 343.0 # m/s
@@ -102,7 +108,7 @@ angle_bins = np.arange(0, 365, 5)
 counts, bin_edges = np.histogram(detected_angles_list, bins=angle_bins)
 bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
-# Circular boundary unification (merge 355°-360° with 0°-5° so 0° reaches full height!)
+# FIX 3: Circular boundary unification (merge 355°-360° with 0°-5° so 0° reaches full height!)
 total_0deg_votes = counts[0] + counts[-1]
 counts[0] = total_0deg_votes
 counts[-1] = total_0deg_votes
@@ -152,9 +158,9 @@ print("\n🎯 Final Sound Sources Localized:")
 for ang in sorted(detected_peaks):
     print(f"   👉 {ang:.0f}°")
 
-# =========================================
-# STEP 3: BEAMFORMING (Super-Directive/DAS)
-# =========================================
+# ===================
+# STEP 3: BEAMFORMING
+# ===================
 
 # target directions that we want to steer towards
 target_angles_deg = sorted(detected_peaks)
@@ -165,54 +171,12 @@ full_freqs = np.fft.rfftfreq(FRAME_SIZE, 1.0 / fs)  # 1025 frequency bins
 
 num_targets = len(target_angles_rad)
 
-# Microphone coordinates
-mic_x = RADIUS * np.cos(mic_angles)
-mic_y = RADIUS * np.sin(mic_angles)
-
-# Distance matrix btw every mic pair i and j: shape(8, 8)
-dist_matrix = np.sqrt((mic_x[:, None] - mic_x[None, :]) ** 2 + (mic_y[:, None] - mic_y[None, :]) ** 2)
-
-# WNG Threshold from Slide 13 (e.g. gamma = -6 dB to prevent mic noise amplification)
-GAMMA_DB = -6.0
-GAMMA_LINEAR = 10.0 ** (GAMMA_DB / 10.0)  # Minimum allowed WNG
-I = np.eye(num_mics, dtype=np.complex64)
-
-# Target arrival delays: shape (3 targets, 8 mics)
+# Delay for each target angle and each microphone: shape (3 targets, 8 mics)
 target_tau = (RADIUS / SPEED_OF_SOUND) * np.cos(target_angles_rad[:, None] - mic_angles[None, :])
 
-# Array to store Super-Directive weights: shape (3 targets, 8 mics, 1025 frequencies)
-beam_weights = np.zeros((num_targets, num_mics, len(full_freqs)), dtype=np.complex64)
-
-def compute_mvdr_weights(Gamma_mat, d_vec, eps):
-  """Computes MVDR weights with diagonal loading epsilon."""
-  inv_R = np.linalg.inv(Gamma_mat + eps * I)
-  inv_R_d = inv_R @ d_vec
-  w = inv_R_d / (np.conj(d_vec) @ inv_R_d)
-  return w
-
-for k_freq, f in enumerate(full_freqs):
-  # Diffuse coherence matrix Gamma(f) = sinc(2*pi*f*d/c)
-  Gamma = np.sinc(2.0 * f * dist_matrix / SPEED_OF_SOUND).astype(np.complex64)
-  for k_target in range(num_targets):
-    d = np.exp(-1j * 2 * np.pi * f * target_tau[k_target, :])
-    # 1. Try unconstrained (epsilon = 0)
-    w = compute_mvdr_weights(Gamma, d, eps=1e-6)
-    wng = 1.0 / (np.real(np.conj(w) @ w) + 1e-12)
-    # 2. If WNG < gamma, find the optimal epsilon via bisection search
-    if wng < GAMMA_LINEAR:
-      low_eps, high_eps = 1e-6, 1.0
-      for _ in range(8):  # 8 iterations reaches exact precision in 0.001s
-        mid_eps = 0.5 * (low_eps + high_eps)
-        w_test = compute_mvdr_weights(Gamma, d, eps=mid_eps)
-        wng_test = 1.0 / (np.real(np.conj(w_test) @ w_test) + 1e-12)
-        if wng_test < GAMMA_LINEAR:
-          low_eps = mid_eps  # Needs more loading
-        else:
-          high_eps = mid_eps  # Can use less loading
-      w = compute_mvdr_weights(Gamma, d, eps=high_eps)
-    # Store conjugate weights for w^H * X
-    beam_weights[k_target, :, k_freq] = np.conj(w)
-
+# Complex steering weights across all 1025 frequencies
+# Shape: (3 targets, 8 mics, 1025 frequencies)
+beam_weights = (1.0 / num_mics) * np.exp(-1j * 2 * np.pi * full_freqs[None, None, :] * target_tau[:, :, None])
 
 # Hanning window for smooth audio reconstruction (no clicks / pops)
 window = np.hanning(FRAME_SIZE)
@@ -233,7 +197,7 @@ for frame_idx in range(num_frames):
     # 2. Real FFT (0 to 22050 hz) - Natural speech, no PHAT
     X = np.fft.rfft(frame_windowed, axis=1)     # Shape (8 mics, 1025 freqs)
 
-    # 3. Apply the filter: Y = sum(w * X) across 8 mics
+    # 3. Apply the Delay-and-Sum filter: Y = sum(w * X) across 8 mics
     # beam_weights shape: (3, 8, 1025), X[None, :, :] shape: (1, 8, 1025)
     # Summing over axis=1 (the 8 mics) gives shape: (3 beams, 1025 freqs)
     Y_frame = np.sum(beam_weights * X[None, :, :], axis=1)
@@ -241,42 +205,67 @@ for frame_idx in range(num_frames):
     # Store in output tensor
     Y_stft[:, :, frame_idx] = Y_frame
 
+
+# =======================================
+# STEP 4: POST-FILTERING (BINARY-MASKING)
+# =======================================
 output_len = (num_frames - 1) * HOP_SIZE + FRAME_SIZE 
-reconstructed_audio = np.zeros((num_targets, output_len), dtype=np.float32)
+
+# 1. Compute power of each beam across all time-frequency pixels
+# Shape: (3 beams, 1025 freqs, num_frames)
+beam_power = np.abs(Y_stft) ** 2
+
+# 2. Find the winning beam at every frequency pixel
+# shape (1025 frequencies, num_frames)
+winning_beam = np.argmax(beam_power, axis=0)
+
+# 3. Create binary masks (1 for winner, 0 for losers)
+# Shape: (3 beams, 1025 frequencies, num_frames)
+masks = np.zeros_like(beam_power, dtype=np.float32)
+for k in range(num_targets):
+    masks[k] = (winning_beam == k).astype(np.float32)
+
+# 4. Apply the mask: S_hat = M * Y
+# Shape: (3 beams, 1025 frequencies, num_frames)
+S_stft = masks * Y_stft
+
+# 5. Synthesize the Separated Audio back to Time Domain (iSTFT)
+separated_audio = np.zeros((num_targets, output_len), dtype=np.float32)
 window_sum = np.zeros(output_len, dtype=np.float32)
 
-print("Synthesizing audio back to time domain (iSTFT)...")
-
-# 1. Overlap-Add reconstruction
+print("Synthesizing separated speech via iSTFT...")
 for frame_idx in range(num_frames):
     start = frame_idx * HOP_SIZE
-
-    # Convert 1025 freq bins back into 2048 time samples (iFFT)
-    time_frame = np.fft.irfft(Y_stft[:, :, frame_idx], n=FRAME_SIZE, axis=1)
-
-    # Add to output buffer with windowing
-    reconstructed_audio[:, start : start + FRAME_SIZE] += time_frame * window
+    time_frame = np.fft.irfft(S_stft[:, :, frame_idx], n=FRAME_SIZE, axis=1)
+    separated_audio[:, start : start + FRAME_SIZE] += time_frame * window
     window_sum[start : start + FRAME_SIZE] += window**2
 
-# Normalize by window sum for perfect smooth reconstruction
-reconstructed_audio /= np.maximum(window_sum, 1e-12)
+# FIX 1: Safe normalization preventing boundary division-by-zero spike
+safe_window_sum = np.maximum(window_sum, 0.1 * np.max(window_sum))
+separated_audio /= safe_window_sum
 
-# 2. Save the 3 Output .wav files
-print("\n--- Step 3 Complete! Saving 3 Audio Beams ---")
-saved_files = []
+# FIX 2: Taper off incomplete boundary edges (first and last frame)
+separated_audio[:, :FRAME_SIZE] = 0.0
+separated_audio[:, -FRAME_SIZE:] = 0.0
 
+# 6. Save the cleaned files
 for k in range(num_targets):
     ang = target_angles_deg[k]
-    filename = f"SD_{ang:.0f}deg.wav"
-    file_path = os.path.join("/Users/DELL/Documents/RESEARCH/ResearchWithTeo", filename)
+    filename = f"DAS_postfilter_{ang:.0f}deg.wav"
+    file_path = os.path.join(OUTPUT_FOLDER, filename)
 
     # Normalize audio amplitude to avoid clipping
-    audio_stream = reconstructed_audio[k]
+    audio_stream = separated_audio[k].copy()
     max_peak = np.max(np.abs(audio_stream))
     if max_peak > 0:
         audio_stream = (audio_stream / max_peak) * 0.95
 
+    # FIX 3: Convert Mono (1D) to Stereo (2D: Left and Right channels)
+    # This guarantees playback on macOS QuickTime, spacebar preview, and laptop speakers
+    stereo_audio = np.stack([audio_stream, audio_stream], axis=-1)
+
     # Save as 16-bit PCM WAV (playable in any audio player)
-    wav.write(file_path, fs, (audio_stream * 32767).astype(np.int16))
-    saved_files.append(file_path)
+    wav.write(file_path, fs, (stereo_audio * 32767).astype(np.int16))
     print(f"   💾 Saved Beam {k+1} ({ang:.0f}°): {filename}")
+
+
