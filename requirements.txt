@@ -5,7 +5,3 @@ matplotlib>=3.7.0
 
 # Robot Subsystem & RTDE (UR5 / URSim)
 ur-rtde>=1.6.5
-
-# Dependency analysis & cleanup utilities
-pipreqs>=0.5.0
-pip-autoremove>=0.10.0
