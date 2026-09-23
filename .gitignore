@@ -1,7 +1,7 @@
 # Robotic works drafts
 proposal/
 reports/
-sim_ws/
+# sim_ws/
 
 # VSCode configs
 .vscode/
