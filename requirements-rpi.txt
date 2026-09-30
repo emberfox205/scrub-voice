@@ -1,0 +1,13 @@
+# NLU Intent Classification Requirements for Raspberry Pi 4 (aarch64)
+# Python 3.9 / 3.10 / 3.11 / 3.12 on Raspberry Pi OS 64-bit
+
+# Core Machine Learning Framework (Prebuilt wheels available on PyPI for aarch64)
+torch>=2.0.0
+transformers>=4.38.0
+sentence-transformers>=2.7.0
+setfit>=1.0.3
+scikit-learn>=1.3.0
+
+# Numerical & Benchmarking Utilities
+numpy>=1.24.0
+psutil>=5.9.0
