@@ -31,7 +31,12 @@ try:
 except ImportError:
     from nlu.intent_classifier import IntentClassifier
 
-DEFAULT_MODEL_DIR = os.path.join(current_dir, "models", "setfit_bge-micro-v2_8k")
+# Default model directory (Downloads directory on Raspberry Pi 4)
+DEFAULT_MODEL_DIR = "/home/admin/Downloads/setfit_bge-micro-v2_8k"
+if not os.path.exists(DEFAULT_MODEL_DIR):
+    local_fallback = os.path.join(current_dir, "models", "setfit_bge-micro-v2_8k")
+    if os.path.exists(local_fallback):
+        DEFAULT_MODEL_DIR = local_fallback
 
 BENCHMARK_SAMPLES: List[Tuple[str, str]] = [
     ("Please zoom in three times magnification immediately", "ZOOM_IN"),
