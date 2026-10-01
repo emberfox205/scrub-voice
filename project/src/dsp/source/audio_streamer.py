@@ -63,7 +63,7 @@ class AudioStreamer:
         if self._process is not None:
             self._process.terminate()
             try:
-                self._proces.wait(timeout=2.0)
+                self._process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 self._process.kill()
             self._process = None
