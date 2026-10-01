@@ -1,0 +1,30 @@
+services:
+  ursim:
+    image: universalrobots/ursim_e-series
+    container_name: ursim
+    restart: unless-stopped
+    environment:
+      # Options: UR3e, UR5e, UR10e, UR16e, UR20, UR30
+      - ROBOT_MODEL=UR5e
+    ports:
+      # Explicitly bind to 0.0.0.0 so external devices on Wi-Fi/LAN (like Raspberry Pi) can connect
+      - "0.0.0.0:6080:6080"   # Web PolyScope GUI (http://<LAPTOP_IP>:6080/vnc.html)
+      - "0.0.0.0:30004:30004" # RTDE interface (telemetry & control loop)
+      - "0.0.0.0:30002:30002" # Secondary interface (required by RTDEControlInterface for script injection)
+      - "0.0.0.0:30001:30001" # Primary interface
+      - "0.0.0.0:30003:30003" # Real-Time interface
+      - "0.0.0.0:29999:29999" # Dashboard Server (power on, brake release via code)
+      - "0.0.0.0:5900:5900"   # Native VNC port
+    volumes:
+      - ./ursim_programs:/ursim/programs
+
+# --- How to run and connect from Raspberry Pi ---
+# 1. On Laptop:
+#    cd sim_ws && docker compose up -d
+#    Find laptop Wi-Fi IP: `hostname -I` or `ip -br addr` (e.g., 192.168.1.50)
+#
+# 2. On Raspberry Pi (over same Wi-Fi / LAN):
+#    ROBOT_IP=192.168.1.50 python hello_ur.py
+#
+# 3. View 3D Robot in Browser from Pi or Laptop:
+#    http://192.168.1.50:6080/vnc.html
