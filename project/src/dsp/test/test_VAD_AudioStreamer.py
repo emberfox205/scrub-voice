@@ -3,6 +3,11 @@ import time
 from pathlib import Path
 import numpy as np
 
+# Ensure Python finds 'source' folder regardless of execution path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from source.audio_streamer import AudioStreamer
 from source.vad import SileroVAD
 
