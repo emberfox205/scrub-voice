@@ -1,0 +1,330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scrub-voice/schemas/command_schema.json",
+  "title": "VoiceCommand",
+  "description": "Schema defining a parsed voice-to-intent command payload for the offline edge surgical assistant.",
+  "type": "object",
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "pattern": "^cmd_[a-zA-Z0-9_]+$",
+      "description": "Unique identifier for tracing and execution status tracking (e.g., cmd_1001_190901_001)."
+    },
+    "timestamp": {
+      "type": "number",
+      "description": "Unix epoch timestamp in seconds (float) when intent classification completed."
+    },
+    "raw_transcript": {
+      "type": "string",
+      "description": "Original raw text produced by the ASR stage."
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "pick_tool",
+        "park_arm",
+        "clear_emergency",
+        "halt_emergency",
+        "open_scan",
+        "close_scan",
+        "zoom_display",
+        "navigate_slice",
+        "move_camera",
+        "tilt_camera",
+        "reset_camera",
+        "unknown"
+      ],
+      "description": "Master list of canonical intents (verb-first). Mappings:\n- TOOL_HANDLING: [pick_tool, park_arm]\n- EMERGENCY: [clear_emergency, halt_emergency]\n- MONITOR_DISPLAY: [open_scan, close_scan, zoom_display, navigate_slice]\n- CAMERA_LIGHT: [move_camera, tilt_camera, reset_camera]\n- UNKNOWN: [unknown]"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "TOOL_HANDLING",
+        "EMERGENCY",
+        "CAMERA_LIGHT",
+        "MONITOR_DISPLAY",
+        "UNKNOWN"
+      ],
+      "description": "Functional subsystem category. UNKNOWN is reserved for OUT-OF-DOMAIN or unrecognized inputs."
+    },
+    "slots": {
+      "type": "object",
+      "description": "Extracted entity slots/parameters associated with the detected intent."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Acoustic / NLU classification confidence score (0.0 to 1.0)."
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["LOW", "NORMAL", "HIGH"],
+      "description": "Execution priority level. HIGH is reserved for safety and emergency commands."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["EXECUTE", "OUT-OF-DOMAIN", "AMBIGUOUS"],
+      "description": "NLU gatekeeper status: EXECUTE (valid and confident), OUT-OF-DOMAIN (unrelated speech), or AMBIGUOUS (low confidence or missing required slots)."
+    }
+  },
+  "required": [
+    "command_id",
+    "timestamp",
+    "raw_transcript",
+    "intent",
+    "category",
+    "slots",
+    "confidence",
+    "priority",
+    "status"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "pick_tool" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "TOOL_HANDLING" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "tool_identifier": {
+                "type": "string",
+                "enum": [
+                  "scalpel",
+                  "scissors",
+                  "hemostat",
+                  "forceps"
+                ],
+                "description": "Canonical normalized identifier for the requested tool."
+              }
+            },
+            "required": ["tool_identifier"],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "park_arm" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "TOOL_HANDLING" },
+          "slots": {
+            "type": "object",
+            "maxProperties": 0,
+            "description": "park_arm does not take parameters; slots must be empty."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "enum": ["clear_emergency", "halt_emergency"] } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "EMERGENCY" },
+          "priority": { "const": "HIGH" },
+          "slots": {
+            "type": "object",
+            "maxProperties": 0,
+            "description": "Emergency commands require immediate zero-parameter execution; slots must be empty."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "open_scan" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "MONITOR_DISPLAY" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "scan_type": {
+                "type": "string",
+                "enum": ["ct", "mri", "xray"],
+                "description": "Modality type of the diagnostic imaging scan to open."
+              }
+            },
+            "required": ["scan_type"],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "close_scan" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "MONITOR_DISPLAY" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "scan_type": {
+                "type": "string",
+                "enum": ["ct", "mri", "xray"],
+                "description": "Optional specific scan modality to close; closes active scan if omitted."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "zoom_display" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "MONITOR_DISPLAY" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["IN", "OUT"],
+                "description": "Zoom direction: IN (magnify) or OUT (reduce)."
+              },
+              "factor": {
+                "type": "number",
+                "minimum": 1.1,
+                "maximum": 10.0,
+                "description": "Magnification step factor (e.g., 2.0 for 2x zoom)."
+              }
+            },
+            "required": ["direction"],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "navigate_slice" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "MONITOR_DISPLAY" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["NEXT", "PREVIOUS"],
+                "description": "Relative direction through the cross-sectional slice stack."
+              },
+              "step_count": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Number of slices to advance or rewind (e.g. 5 slices)."
+              },
+              "slice_index": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Direct absolute slice number to jump to (e.g. slice 45)."
+              }
+            },
+            "anyOf": [
+              { "required": ["direction"] },
+              { "required": ["slice_index"] }
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "move_camera" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "CAMERA_LIGHT" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["LEFT", "RIGHT", "UP", "DOWN", "FORWARD", "BACKWARD"],
+                "description": "Linear translation direction."
+              },
+              "distance_cm": {
+                "type": "number",
+                "minimum": 1.0,
+                "maximum": 25.0,
+                "description": "Translational step distance in cm (default 5.0)."
+              }
+            },
+            "required": ["direction"],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "tilt_camera" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "CAMERA_LIGHT" },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["UP", "DOWN", "LEFT", "RIGHT"],
+                "description": "Pitch/yaw angular tilt direction."
+              },
+              "angle_deg": {
+                "type": "number",
+                "minimum": 1.0,
+                "maximum": 45.0,
+                "description": "Rotational tilt angle in degrees (default 15.0)."
+              }
+            },
+            "required": ["direction"],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "EXECUTE" }, "intent": { "const": "reset_camera" } },
+        "required": ["status", "intent"]
+      },
+      "then": {
+        "properties": {
+          "category": { "const": "CAMERA_LIGHT" },
+          "slots": {
+            "type": "object",
+            "maxProperties": 0,
+            "description": "reset_camera returns arm to home overhead pose; slots must be empty."
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}
