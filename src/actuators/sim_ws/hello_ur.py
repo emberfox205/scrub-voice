@@ -15,7 +15,7 @@ def ensure_robot_running(ip=ROBOT_IP, port=DASHBOARD_PORT):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(5.0)
             s.connect((ip, port))
-            s.recv(1024)  # welcome message
+            #s.recv(1024)  # welcome message
             
             def send(cmd):
                 s.sendall((cmd + "\n").encode())
