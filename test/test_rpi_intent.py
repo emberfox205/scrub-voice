@@ -15,26 +15,25 @@ import sys
 import time
 from typing import List, Tuple
 
-# Add src to python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.join(current_dir, "src")
+test_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.dirname(test_dir)
+src_dir = os.path.join(repo_root, "project", "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-
+if os.path.join(repo_root, "project") not in sys.path:
+    sys.path.insert(0, os.path.join(repo_root, "project"))
 try:
     import psutil
 except ImportError:
     psutil = None
-
 try:
-    from src.nlu.intent_classifier import IntentClassifier
-except ImportError:
     from nlu.intent_classifier import IntentClassifier
-
+except ImportError:
+    from src.nlu.intent_classifier import IntentClassifier
 # Default model directory (Downloads directory on Raspberry Pi 4)
 DEFAULT_MODEL_DIR = "/home/admin/Downloads/setfit_bge-micro-v2_8k"
 if not os.path.exists(DEFAULT_MODEL_DIR):
-    local_fallback = os.path.join(current_dir, "models", "setfit_bge-micro-v2_8k")
+    local_fallback = os.path.join(repo_root, "models", "setfit_bge-micro-v2_8k")
     if os.path.exists(local_fallback):
         DEFAULT_MODEL_DIR = local_fallback
 

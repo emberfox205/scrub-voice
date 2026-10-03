@@ -1,8 +1,8 @@
-# scrub-voice
+# scrub-voice (Python 3.13.5)
 
 An Offline, Noise-Robust, Edge Voice-to-Intent Assistant for Sterile Medical Environments.
 
-## NLU Intent Classification (Raspberry Pi 4)
+## NLU Intent Classification (Raspberry Pi 4) 
 
 A fine-tuned SetFit intent classification model (`setfit_bge-micro-v2_8k`) is included in `models/setfit_bge-micro-v2_8k/` for offline edge execution on Raspberry Pi 4 (ARM64).
 
@@ -10,7 +10,7 @@ A fine-tuned SetFit intent classification model (`setfit_bge-micro-v2_8k`) is in
 
 1. Install requirements:
    ```bash
-   pip install -r requirements-rpi.txt
+   pip install -r requirements.txt
    ```
 2. Run benchmark and interactive tester:
    ```bash
