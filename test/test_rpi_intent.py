@@ -17,11 +17,11 @@ from typing import List, Tuple
 
 test_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.dirname(test_dir)
-src_dir = os.path.join(repo_root, "project", "src")
+src_dir = os.path.join(repo_root, "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-if os.path.join(repo_root, "project") not in sys.path:
-    sys.path.insert(0, os.path.join(repo_root, "project"))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 try:
     import psutil
 except ImportError:
@@ -33,9 +33,11 @@ except ImportError:
 # Default model directory (Downloads directory on Raspberry Pi 4)
 DEFAULT_MODEL_DIR = "/home/admin/Downloads/setfit_bge-micro-v2_8k"
 if not os.path.exists(DEFAULT_MODEL_DIR):
-    local_fallback = os.path.join(repo_root, "models", "setfit_bge-micro-v2_8k")
+    local_fallback = os.path.join(repo_root, "src", "nlu", "models", "setfit_bge-micro-v2_8k")
     if os.path.exists(local_fallback):
         DEFAULT_MODEL_DIR = local_fallback
+    elif os.path.exists(os.path.join(repo_root, "models", "setfit_bge-micro-v2_8k")):
+        DEFAULT_MODEL_DIR = os.path.join(repo_root, "models", "setfit_bge-micro-v2_8k")
 
 BENCHMARK_SAMPLES: List[Tuple[str, str]] = [
     ("Please zoom in three times magnification immediately", "ZOOM_IN"),

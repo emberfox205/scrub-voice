@@ -14,8 +14,10 @@ The formal project proposal outlines the clinical motivation, offline edge archi
 
 ## 2. Weekly Progress Reports
 
+The ongoing weekly progress reports document sprint milestones, hardware/software integration status, and upcoming tasks.
+
+* **Weekly Report (Overleaf):** [Overleaf Document](https://www.overleaf.com/project/6ac20e6f0c75917b37d9e6ce)
+
 | Week | Date | Overleaf Report Link |
 | :--- | :--- | :--- |
-| **Week 1** | **2026-09-21** | [Weekly Report — 2026-09-21](https://www.overleaf.com/read/xqsgnvbggydy#456ca6) |
-
-
+| **Week 1** | **2026-09-21** | [Weekly Report — 2026-09-21](https://www.overleaf.com/project/6ac20e6f0c75917b37d9e6ce) |

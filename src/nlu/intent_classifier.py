@@ -13,16 +13,23 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_MODEL_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "models", "setfit_bge-micro-v2_8k"
+)
+
+
 class IntentClassifier:
     """Loads a fine-tuned SetFit intent classification model and runs edge inference."""
 
-    def __init__(self, model_path: str, device: str = "cpu"):
+    def __init__(self, model_path: Optional[str] = None, device: str = "cpu"):
         """Initialize the intent classifier.
 
         Args:
             model_path: Absolute or relative directory path containing the SetFit model.
             device: Device to run inference on ("cpu" for Raspberry Pi).
         """
+        if model_path is None:
+            model_path = DEFAULT_MODEL_DIR
         self.model_path = os.path.abspath(model_path)
         self.device = device
         self.labels: List[str] = []
