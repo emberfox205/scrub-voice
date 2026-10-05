@@ -1,8 +1,18 @@
 import sys
 import time
 import subprocess
+from pathlib import Path
 import numpy as np
-from source.vad import SileroVAD
+
+dsp_root = Path(__file__).resolve().parent.parent
+if str(dsp_root) not in sys.path:
+    sys.path.insert(0, str(dsp_root))
+
+try:
+    from source.vad import SileroVAD
+except ImportError:
+    from src.dsp.source.vad import SileroVAD
+
 
 # ---------------- Audio & Hardware Configuration ----------------
 DEVICE = "plughw:seeed8micvoicec,0"

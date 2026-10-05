@@ -29,7 +29,7 @@ cd scrub-voice
 
 Ensure the model directory is present:
 ```bash
-ls -lh models/setfit_bge-micro-v2_8k/
+ls -lh src/nlu/models/setfit_bge-micro-v2_8k/
 ```
 You should see `model.safetensors` (~66 MB), `model_head.pkl`, and config JSON files.
 
@@ -63,19 +63,19 @@ pip install -r requirements-rpi.txt
 
 ### Option A: Full Test (Automated Benchmark + Interactive Testing)
 ```bash
-python test_rpi_intent.py
+python test/test_rpi_intent.py
 ```
 
 ### Option B: Automated Latency & RAM Benchmark Only
 Evaluates all 12 surgical commands, calculates mean/min/max/P95 latency, and measures process memory footprint:
 ```bash
-python test_rpi_intent.py --benchmark --runs 5
+python test/test_rpi_intent.py --benchmark --runs 5
 ```
 
 ### Option C: Live Interactive Command Prompt Only
 Type voice utterances in real-time to inspect intent predictions:
 ```bash
-python test_rpi_intent.py --interactive
+python test/test_rpi_intent.py --interactive
 ```
 
 Example session:

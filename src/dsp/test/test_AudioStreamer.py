@@ -1,7 +1,17 @@
+import sys
+from pathlib import Path
 import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch 
-from source.audio_streamer import AudioStreamer
+
+dsp_root = Path(__file__).resolve().parent.parent
+if str(dsp_root) not in sys.path:
+    sys.path.insert(0, str(dsp_root))
+
+try:
+    from source.audio_streamer import AudioStreamer
+except ImportError:
+    from src.dsp.source.audio_streamer import AudioStreamer
 
 def test_streamer_initialization():
     streamer = AudioStreamer(sample_rate=16000, chunk_duration=0.5)

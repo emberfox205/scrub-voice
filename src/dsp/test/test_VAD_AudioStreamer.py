@@ -8,8 +8,12 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from source.audio_streamer import AudioStreamer
-from source.vad import SileroVAD
+try:
+    from source.audio_streamer import AudioStreamer
+    from source.vad import SileroVAD
+except ImportError:
+    from src.dsp.source.audio_streamer import AudioStreamer
+    from src.dsp.source.vad import SileroVAD
 
 def main():
     print("⏳ Initializing Silero VAD...")
