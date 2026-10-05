@@ -1,0 +1,20 @@
+# Auto detect text files and force LF line endings
+* text=auto eol=lf
+
+# Explicit LF formatting for source code and documents
+*.py text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+
+# Denote all binary files that should not be touched
+*.pkl binary
+*.safetensors binary
+*.bin binary
+*.pt binary
+*.pth binary
