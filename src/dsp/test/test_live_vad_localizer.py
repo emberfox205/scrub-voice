@@ -32,7 +32,7 @@ def initialize_system():
     localizer = SRPLocalizer(
         sample_rate=SAMPLE_RATE,
         radius=0.04625,
-        par_threshold=1.25
+        par_threshold=1.15
     )
 
     # Cold-start warmup for FFT / NumPy
@@ -80,6 +80,11 @@ def run_live_pipeline():
                 t_vad = time.perf_counter()
                 is_speech = vad.is_speech_active(chunk)
                 vad_ms = (time.perf_counter() - t_vad) * 1000
+
+                # 🎙️ ADD THIS LINE: Check if all 6 mics are hearing sound
+                if is_speech:
+                    rms_mics = np.round(np.sqrt(np.mean(chunk**2, axis=1)), 3)
+                    print(f"      🎙️ [Mics 1..6 RMS]: {rms_mics}")
 
                 # EARLY-EXIT GATING: If silence/noise, abort now to save CPU!
                 if not is_speech:
