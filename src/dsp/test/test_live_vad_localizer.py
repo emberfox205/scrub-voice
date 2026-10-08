@@ -32,7 +32,7 @@ def initialize_system():
     localizer = SRPLocalizer(
         sample_rate=SAMPLE_RATE,
         radius=0.04625,
-        par_threshold=1.08
+        par_threshold=1.15
     )
 
     # Cold-start warmup for FFT / NumPy
