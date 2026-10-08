@@ -12,7 +12,7 @@ class SRPLocalizer:
         frame_size: int = 512,
         hop_size: int = 256,
         freq_range: Tuple[float, float] = (100.0, 3500.0),
-        par_threshold: float = 1.25,
+        par_threshold: float = 1.08,
     ):
         self.sample_rate = sample_rate
         self.radius = radius
