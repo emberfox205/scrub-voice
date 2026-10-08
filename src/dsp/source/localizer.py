@@ -120,8 +120,8 @@ class SRPLocalizer:
         peaks_padded, _ = find_peaks(
             power_padded, 
             distance=15,
-            prominence=0.15,
-            height=0.25
+            prominence=0.08,
+            height=0.15
         )
 
         # Map padded peak indices back to [0, 360] degrees and deduplicate
