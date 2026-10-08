@@ -81,11 +81,6 @@ def run_live_pipeline():
                 is_speech = vad.is_speech_active(chunk)
                 vad_ms = (time.perf_counter() - t_vad) * 1000
 
-                # 🎙️ ADD THIS LINE: Check if all 6 mics are hearing sound
-                if is_speech:
-                    rms_mics = np.round(np.sqrt(np.mean(chunk**2, axis=1)), 3)
-                    print(f"      🎙️ [Mics 1..6 RMS]: {rms_mics}")
-
                 # EARLY-EXIT GATING: If silence/noise, abort now to save CPU!
                 if not is_speech:
                     print(
