@@ -97,7 +97,13 @@ class SRPLocalizer:
         # -------------------------------------------------------------
         min_p = np.min(power_360)
         max_p = np.max(power_360)
+        mean_p = np.mean(power_360)
+        par = max_p / (mean_p + 1e-12)
         norm_power = (power_360 - min_p) / (max_p - min_p + 1e-12)
+
+        # If spatial energy is flat (diffuse noise / reverberant echo), abort Gate 2
+        if par < self.par_threshold:
+            return [], norm_power
 
         # -------------------------------------------------------------
         # 3. Circular Padding (30°) so 0°/360° boundary is not truncated
@@ -113,7 +119,7 @@ class SRPLocalizer:
         # -------------------------------------------------------------  
         peaks_padded, _ = find_peaks(
             power_padded, 
-            distance=25,
+            distance=15,
             prominence=0.15,
             height=0.25
         )
