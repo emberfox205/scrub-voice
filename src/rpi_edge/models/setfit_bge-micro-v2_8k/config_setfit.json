@@ -1,0 +1,18 @@
+{
+  "labels": [
+    "clear_emergency",
+    "close_scan",
+    "halt_emergency",
+    "log_event",
+    "move_camera",
+    "navigate_slice",
+    "open_scan",
+    "park_arm",
+    "pick_tool",
+    "reset_camera",
+    "tilt_camera",
+    "unknown",
+    "zoom_display"
+  ],
+  "normalize_embeddings": false
+}

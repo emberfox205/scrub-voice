@@ -1,0 +1,17 @@
+{
+  "filler_patterns": [
+    "\\bplease\\b",
+    "\\bcan you\\b",
+    "\\bcould you\\b",
+    "\\bwould you\\b",
+    "\\bassistant\\b",
+    "\\bhey assistant\\b",
+    "\\bhey\\b",
+    "\\bnurse\\b",
+    "\\bthank you\\b",
+    "\\bthanks\\b",
+    "\\bnow\\b",
+    "\\bokay\\b",
+    "\\boh\\b"
+  ]
+}

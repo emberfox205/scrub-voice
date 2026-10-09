@@ -1,0 +1,15 @@
+# Minimal Edge NLU Inference Dependencies for Raspberry Pi 4 (aarch64 / ARMv8)
+# Supports Python 3.9, 3.10, 3.11, 3.12 on Raspberry Pi OS 64-bit
+
+# Core Deep Learning & NLP Framework (Prebuilt wheels on PyPI for aarch64)
+torch>=2.0.0
+transformers>=4.38.0
+sentence-transformers>=2.7.0
+setfit>=1.0.3
+scikit-learn>=1.3.0
+
+# Schema Validation & Numerical Utilities
+jsonschema>=4.20.0
+numpy>=1.24.0
+psutil>=5.9.0
+
