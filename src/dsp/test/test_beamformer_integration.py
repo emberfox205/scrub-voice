@@ -162,7 +162,7 @@ def run_live_pipeline():
                     for track_angle in speaker_tracks.keys():
                         diff = abs(angle - track_angle)
                         circ_diff = min(diff, 360.0 - diff)
-                        if circ_diff <= 15.0:  # ±15° tolerance for head movement
+                        if circ_diff <= 25.0:  # ±25° tolerance for head movement
                             matched_track = track_angle
                             break
 
