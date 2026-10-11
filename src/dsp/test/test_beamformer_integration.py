@@ -162,7 +162,7 @@ def run_live_pipeline():
                     for track_angle in speaker_tracks.keys():
                         diff = abs(angle - track_angle)
                         circ_diff = min(diff, 360.0 - diff)
-                        if circ_diff <= 15.0:  # ±25° tolerance for head movement
+                        if circ_diff <= 15.0:  # ±15° tolerance for head movement
                             matched_track = track_angle
                             break
 
@@ -196,7 +196,7 @@ def run_live_pipeline():
                 if chunks:
                     beam_full = np.concatenate(chunks)
                     track_dur = len(beam_full) / SAMPLE_RATE
-                    beam_path = OUTPUT_DIR / f"live_beam_stream{track_angle}.wav"
+                    beam_path = OUTPUT_DIR / f"live_beam_stream_{track_angle}deg.wav"
                     wavfile.write(str(beam_path), SAMPLE_RATE, (beam_full * 32767).astype(np.int16))
                     print(f"   👉 Speaker at {int(track_angle):3d}° ({track_dur:4.1f}s): {beam_path}")
             print("=" * 70)
