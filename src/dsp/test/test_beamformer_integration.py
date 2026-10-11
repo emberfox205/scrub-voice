@@ -51,7 +51,7 @@ def initialize_system():
     # 3. Module DAS Beamformer
     print("⏳ [3/3] Initializing DAS Beamformer (Module 3)...")
     beamformer = DASBeamformer(sample_rate=SAMPLE_RATE, radius=0.04625)
-    _ = beamformer.beamform(dummy_chunk, target_angle_deg=0.0)
+    _ = beamformer.beamform(dummy_chunk, target_angles=0.0)
     print("   ✓ DAS Beamformer ready (360° weights precomputed).")
 
     print("=" * 70)
@@ -138,7 +138,7 @@ def run_live_pipeline():
                 # Steers simultaneous beams for ALL detected angles
                 # -------------------------------------------------------------
                 t_beam = time.perf_counter()
-                enhanced_streams = beamformer.beamform_multi(chunk, target_angles_deg=detected_angles)
+                enhanced_streams = beamformer.beamform(chunk, target_angles=detected_angles)
                 beam_ms = (time.perf_counter() - t_beam) * 1000
 
                 total_latency_ms = vad_ms + loc_ms + beam_ms
