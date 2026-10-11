@@ -18,10 +18,10 @@ from source.postfilter import DeepFilterPostFilter
 output_dir = repo_root / "data" / "dsp" / "output"
 
 # The two stream files to enhance
-FILES_TO_ENHANCE = [
-    "live_beam_stream0.wav",
-    "live_beam_stream1.wav"
-]
+FILES_TO_ENHANCE = sorted([
+    f.name for f in output_dir.glob("live_beam_stream_*.wav")
+    if not f.name.endswith("_deepfiltered.wav")
+])
 
 def enhance_file(pf: DeepFilterPostFilter, filename: str):
     input_path = output_dir/filename
