@@ -19,7 +19,8 @@ output_dir = repo_root / "data" / "dsp" / "output"
 
 # The two stream files to enhance
 FILES_TO_ENHANCE = [
-    "live_raw.wav"
+    "live_beam_stream0.wav",
+    "live_beam_stream1.wav"
 ]
 
 def enhance_file(pf: DeepFilterPostFilter, filename: str):
