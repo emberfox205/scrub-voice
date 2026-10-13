@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>SCRUB-VOICE SURGICAL MONITOR</title>
+  <link rel="stylesheet" href="/static/style.css?v=3.0">
+</head>
+<body>
+
+  <!-- 1. Header Bar: Flat, 1px divider, IBM Carbon g100 style -->
+  <header class="header-bar">
+    <div class="header-left">
+      <span class="system-title">SCRUB-VOICE SURGICAL MONITOR</span>
+    </div>
+
+    <!-- Voice Command Status Bar -->
+    <div class="header-center voice-status-bar">
+      <div id="transcriptText" class="transcript-display">"Listening for surgical voice commands..."</div>
+      <div class="voice-metrics">
+        <span id="confidencePill" class="metric-badge">Confidence: 100%</span>
+        <span id="latencyPill" class="metric-badge">Latency: 0.0 ms</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- 2. Main Workspace Layout: Flush edge-to-edge grid separated by 1px hairline dividers -->
+  <main class="main-layout">
+    <div class="split-workspace">
+
+      <!-- Left Column: Diagnostic Imaging Viewport (OHIF Standard) -->
+      <section class="viewport-panel" aria-label="Diagnostic Imaging Viewport">
+        <div class="viewport-canvas-container">
+          <canvas id="dicomCanvas"></canvas>
+
+          <!-- Fundamental OHIF HUD Overlays -->
+          <div class="hud-corner top-left">
+            <div>SCAN: <span id="hudScanType">STANDBY</span></div>
+          </div>
+          <div class="hud-corner top-right">
+            <div>SLICE: <span id="statSlice">1</span> / 100</div>
+          </div>
+          <div class="hud-corner bottom-left">
+            <div>ZOOM: <span id="statZoom">1.00x</span></div>
+          </div>
+          <div class="hud-corner bottom-right">
+            <div>W: 400 L: 40</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Camera Viewport + Subsystem Telemetry -->
+      <aside class="sidebar-column" aria-label="Camera and Subsystem Telemetry">
+
+        <!-- Surgical Cavity Camera Viewport: Clean empty viewport, centered text -->
+        <section class="camera-panel" aria-label="Surgical Cavity Camera">
+          <div class="camera-canvas-container">
+            <div class="camera-feed-placeholder">
+              <div class="cam-center-text">NO ACTIVE OPTICAL FEED</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Dense Data Grid: Robot Subsystems Telemetry -->
+        <section class="telemetry-panel" aria-label="Robot Subsystems Telemetry">
+          <div class="panel-header">
+            <span class="panel-title">SUBSYSTEM TELEMETRY</span>
+          </div>
+
+          <div class="telemetry-body">
+
+            <!-- Section 1: UR10e Robot Arm -->
+            <div class="subsystem-section">
+              <div class="section-title-row">
+                <span class="section-label">UR10e ROBOT ARM</span>
+                <span id="telemRobotStatus" class="status-tag standby">STANDBY / OFFLINE</span>
+              </div>
+              <div class="data-table">
+                <div class="data-row">
+                  <span class="label">TCP POS</span>
+                  <span id="telemPose" class="data-val">X: 0.0 mm | Y: 0.0 mm | Z: 0.0 mm</span>
+                </div>
+                <div class="data-row">
+                  <span class="label">TCP ORI</span>
+                  <span id="telemOrientation" class="data-val">Rx: 0.0° | Ry: 0.0° | Rz: 0.0°</span>
+                </div>
+              </div>
+
+              <!-- Joint Angles J1-J6 Tabular Grid -->
+              <div class="joints-grid">
+                <div class="joint-cell">
+                  <div class="joint-info"><span class="j-id">J1 BASE</span><span id="j1Val" class="j-deg">0.0°</span></div>
+                  <div class="mini-bar"><div id="j1Bar" class="bar-fill" style="width: 50%;"></div></div>
+                </div>
+                <div class="joint-cell">
+                  <div class="joint-info"><span class="j-id">J2 SHLDR</span><span id="j2Val" class="j-deg">-90.0°</span></div>
+                  <div class="mini-bar"><div id="j2Bar" class="bar-fill" style="width: 25%;"></div></div>
+                </div>
+                <div class="joint-cell">
+                  <div class="joint-info"><span class="j-id">J3 ELBOW</span><span id="j3Val" class="j-deg">0.0°</span></div>
+                  <div class="mini-bar"><div id="j3Bar" class="bar-fill" style="width: 50%;"></div></div>
+                </div>
+                <div class="joint-cell">
+                  <div class="joint-info"><span class="j-id">J4 WRIST1</span><span id="j4Val" class="j-deg">-90.0°</span></div>
+                  <div class="mini-bar"><div id="j4Bar" class="bar-fill" style="width: 25%;"></div></div>
+                </div>
+                <div class="joint-cell">
+                  <div class="joint-info"><span class="j-id">J5 WRIST2</span><span id="j5Val" class="j-deg">0.0°</span></div>
+                  <div class="mini-bar"><div id="j5Bar" class="bar-fill" style="width: 50%;"></div></div>
+                </div>
+                <div class="joint-cell">
+                  <div class="joint-info"><span class="j-id">J6 WRIST3</span><span id="j6Val" class="j-deg">0.0°</span></div>
+                  <div class="mini-bar"><div id="j6Bar" class="bar-fill" style="width: 50%;"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section 2: RG-2 Gripper & Tools -->
+            <div class="subsystem-section">
+              <div class="section-title-row">
+                <span class="section-label">RG-2 GRIPPER & TOOLS</span>
+                <span id="telemGripperStatus" class="status-tag standby">STANDBY / OFFLINE</span>
+              </div>
+              <div class="data-table">
+                <div class="data-row">
+                  <span class="label">ACTIVE TOOL</span>
+                  <span id="telemHeldTool" class="data-val tool-active">NONE / PARKED</span>
+                </div>
+                <div class="data-row">
+                  <span class="label">GRIP FORCE</span>
+                  <div class="meter-val-wrap">
+                    <span id="telemGripperForce" class="data-val">0.0 N</span>
+                    <div class="threshold-meter"><div id="telemForceMeter" class="meter-fill" style="width: 0%;"></div></div>
+                  </div>
+                </div>
+                <div class="data-row">
+                  <span class="label">FINGER WIDTH</span>
+                  <div class="meter-val-wrap">
+                    <span id="telemGripperWidth" class="data-val">0.0 mm</span>
+                    <div class="threshold-meter"><div id="telemWidthMeter" class="meter-fill" style="width: 0%;"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+      </aside>
+
+    </div>
+
+    <!-- 3. Bottom Section: EMR Voice Audit Log Terminal -->
+    <section class="audit-panel" aria-label="Intraoperative Voice Audit Log">
+      <div class="panel-header">
+        <span class="panel-title">EMR VOICE AUDIT LOG TERMINAL</span>
+      </div>
+      <div class="audit-table-container">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th class="col-time">TIMESTAMP</th>
+              <th class="col-trigger">COMMAND / TRIGGER</th>
+              <th class="col-intent">PARSED INTENT</th>
+              <th class="col-status">STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="auditLogTableBody">
+            <tr>
+              <td colspan="4" class="empty-log-msg">No intraoperative voice events recorded yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/static/app.js?v=3.0"></script>
+</body>
+</html>
