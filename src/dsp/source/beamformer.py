@@ -71,7 +71,7 @@ class DASBeamformer:
         self, 
         audio_chunk: np.ndarray, 
         target_angles: Union[float, List[float]],
-        apply_spatial_mask: bool = False,
+        apply_spatial_mask: bool = True,
         ) -> Union[np.ndarray, List[np.ndarray]]:
         """
         Steers beam(s) towards one or more target angles.
