@@ -59,14 +59,31 @@ class AudioStreamer:
         )
 
     def stop(self) -> None:
-        # Terminate the arecord process
+        """Terminate the arecord process cleanly without driver deadlocks."""
         if self._process is not None:
-            self._process.terminate()
             try:
-                self._process.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-            self._process = None
+                # 1. Close stdout pipe first so arecord knows nothing is listening
+                if self._process.stdout is not None:
+                    try:
+                        self._process.stdout.close()
+                    except Exception:
+                        pass
+
+                # 2. Send SIGINT (Ctrl+C signal) instead of SIGTERM.
+                # arecord handles SIGINT natively by closing the ALSA PCM device cleanly!
+                import signal
+                self._process.send_signal(signal.SIGINT)
+
+                # 3. Wait briefly, then force-kill if driver refuses to yield
+                try:
+                    self._process.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                    self._process.wait(timeout=0.5)
+            except Exception as e:
+                pass
+            finally:
+                self._process = None
 
     # ============
     # Reading
