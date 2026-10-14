@@ -1,0 +1,9 @@
+faster-whisper==1.0.3
+numpy==1.26.4
+requests==2.32.3
+sounddevice==0.4.7
+soundfile==0.12.1
+scipy==1.13.1
+vosk==0.3.45
+jiwer==3.0.4
+psutil==6.0.0
