@@ -40,7 +40,7 @@ sys.path.insert(0, str(SRC_DIR))
 from asr.bench_configs import BASELINES, CONFIGS
 from asr.metrics import bootstrap_ci, clip_errors, cluster_resamples, corpus_wer
 from asr.normalize import normalize
-from asr.vocab import check_all_biasing_leakage, command_group, term_counts
+from asr.vocab import check_all_biasing_leakage, cluster_key, term_counts
 
 RESULTS_DIR = ASR_DIR / "results"
 RAW_DIR = RESULTS_DIR / "raw"
@@ -322,7 +322,7 @@ def main() -> None:
         sys.exit("No dev clips yet - record data/asr/prompts/commands_dev.txt first "
                  "(src/asr/scripts/record_testset.py, see src/asr/CLAUDE.md Phase B).")
     check_all_biasing_leakage([c["reference_text"] for c in dev_clips])
-    clusters = [command_group(normalize(c["reference_text"])) for c in dev_clips]
+    clusters = [cluster_key(c["notes"], normalize(c["reference_text"])) for c in dev_clips]
     resamples = cluster_resamples(clusters, n=args.bootstrap, seed=0)
     print(f"Bootstrap: {args.bootstrap} resamples over {len(set(clusters))} command groups "
           f"({len(dev_clips)} dev clips)")

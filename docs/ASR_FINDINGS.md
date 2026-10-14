@@ -13,6 +13,54 @@
 > point to that local project folder (owner: Josias) and are not part of the
 > repo. The module itself lives in `src/asr/`.
 
+## Phase A – vocabulary for the new command list (2026-10-14)
+
+No new accuracy numbers yet: the new commands still have to be recorded
+(Phase B). Everything below was checked with unit tests and with a few
+clips made by the Windows text-to-speech voice (only a sanity check, not a
+measurement).
+
+### What changed
+| part | before | now |
+|---|---|---|
+| Command words (`src/asr/vocab.py`) | old image viewer (pan, window, axial, …) | taken from `schemas/command_schema.json`, listed per command, including all tool synonyms; every number counts as a command word |
+| Vosk grammar | about 35 phrases | a plain list of about 110 words; no command sentence written into it |
+| Whisper prompt sentence | old commands | new sentence with the new terms, plus a shorter one to test speed |
+| Numbers | up to 99 | up to the hundreds ("one hundred and twenty" → 120) and decimals ("one point five" → 1.5) |
+| Correction list | built from the old recordings | empty – to be rebuilt from the new development recordings only |
+| "Log event" free text | not possible with the grammar | grammar finds "log event", a second free-speech recognizer writes the rest |
+
+### Things we learned
+- **A Vosk grammar accepts any order of its words.** A plain word list
+  decoded "zoom in two x please" correctly. So the grammar needs no
+  example sentences, and test sentences can't leak into it.
+- **Two command words are missing from the Vosk dictionary:** "hemostat"
+  and "x-ray". The grammar uses "hemo stat" and "x ray" instead; the text
+  cleaning joins them back.
+- **"Log event" works with two recognizers.** Example: grammar alone →
+  "log event [unknown] note [unknown]"; free speech alone → "**blog** event
+  first incision note patient vital stable"; combined → "log event first
+  incision note patient vital stable".
+- **Bug fixed:** Vosk's word times kept counting from the first recording,
+  so from the second command on the word times in our output were wrong.
+  Not visible in earlier results (they only scored the text).
+- **Bug fixed:** Whisper writes "1.5x"; the old text cleaning removed the
+  dot and turned it into "15x".
+- **To watch in Phase B:** the grammar heard "go **two** slice" instead of
+  "go to slice"; Whisper with the prompt added junk words at the end
+  ("Thanks.", "Cheers.") on clips with trailing silence.
+
+### Written forms we chose (to confirm with Khanh)
+| said | `normalized` field |
+|---|---|
+| "zoom in two x, please" / Whisper "Zoom in 2x, please." | `zoom in 2 x` |
+| "one point five x" / "1.5x" | `1.5 x` |
+| "go to slice one hundred twenty" | `go to slice 120` |
+| "display X-ray" | `display xray` |
+| "five centimeters" / "5 cm" | `5 centimeters` |
+| "fifteen degrees" / "15°" | `15 degrees` |
+| "knife" | `knife` (synonyms stay – mapping is the language understanding stage's job) |
+
 ## Decisions after the meeting and current state (2026-10-14)
 
 ### Decisions

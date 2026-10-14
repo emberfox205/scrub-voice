@@ -1,75 +1,118 @@
-"""Command vocabulary and the term metrics built on it.
+"""Command vocabulary (from schemas/command_schema.json and
+docs/COMMAND_SCHEMA_GUIDE.md) and the term metrics built on it.
 
-!! OUTDATED VOCABULARY !! COMMAND_VOCAB, SPOKEN_FORMS and WHISPER_PROMPT
-below still describe the OLD image-viewer commands (pan, window, axial, ...)
-that the first 46-clip test set (not in this repo) was recorded with. The real
-command set is now defined by schemas/command_schema.json - rewriting this
-file from it is Phase A in src/asr/CLAUDE.md. The functions (find_terms,
-term_counts, command_group, vosk_grammar_phrases, check_leakage) are
-vocabulary-independent and can stay.
+Terms are the words that carry an intent or a slot value. They are matched
+on normalized text, as whole words, longest phrase first and without
+overlap, and counted per occurrence: "back off" counts once as "back off",
+not also as "back". Every number is a term too (slot values: zoom factor,
+slice, centimeters, degrees), so a wrong or invented number counts as a
+wrong or invented term.
 
-Terms are matched on normalized text, as whole words, longest phrase first
-and without overlap, and counted per occurrence: "lung window" counts once
-as "lung window", not also as "window".
+Nothing in this file may be copied from the test phrase lists in
+data/asr/prompts/ (check_leakage, src/asr/test/test_vocab.py).
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
-from asr.normalize import normalize
+from asr.normalize import NUMBER_WORDS, TENS, normalize
 
-COMMAND_VOCAB = [
-    "zoom in", "zoom out",
-    "pan left", "pan right", "pan up", "pan down",
-    "rotate", "flip", "reset",
-    "contrast", "brightness", "window", "level",
-    "lung window", "bone window", "soft tissue",
-    "axial", "coronal", "sagittal",
-    "next slice", "previous slice", "scroll", "series",
-    "DICOM", "PACS", "CT", "MRI",
-    "measure", "annotate", "undo",
-]
+# The words the ASR must get right, per intent (src/asr/CLAUDE.md "Commands
+# to recognise"). Synonyms are listed because the speaker may use them; the
+# language understanding stage maps them to the schema tokens.
+INTENT_TERMS: dict[str, list[str]] = {
+    "pick_tool": [
+        "hand", "pass", "give me",
+        "scalpel", "scissors", "hemostat", "forceps",
+        "knife", "ten blade", "blade", "iris", "metz", "metzenbaum",
+        "clamp", "snap", "tweezers", "pickups",
+    ],
+    "park_arm": ["park", "standby", "retract", "arm", "robot"],
+    "clear_emergency": ["emergency", "clear", "area", "back off"],
+    "halt_emergency": ["emergency", "stop", "halt", "freeze", "robot"],
+    "open_scan": ["open", "show", "display", "scan", "CT", "MRI", "X-ray"],
+    "close_scan": ["close", "dismiss", "scan", "viewer", "CT", "MRI", "X-ray"],
+    # "in"/"out" only count together with "zoom": alone they are everyday words.
+    "zoom_display": ["zoom", "zoom in", "zoom out", "magnify"],
+    "navigate_slice": ["next", "previous", "back", "go to", "slice", "slices"],
+    # Plus free text (event name, comment), which is not a term.
+    "log_event": ["log", "record", "event", "milestone", "note", "comment"],
+    "move_camera": [
+        "camera", "move", "left", "right", "up", "down", "forward", "backward",
+        "centimeter", "centimeters",
+    ],
+    "tilt_camera": ["tilt", "up", "down", "left", "right", "degree", "degrees"],
+    "reset_camera": ["reset", "center", "view", "home", "camera"],
+}
 
-# How each acronym is said aloud, for grammars that need real words. Each
-# spoken form must normalize back to the canonical term (asr/normalize.py).
-# PACS has no unambiguous spoken form ("packs" is an everyday word), so it is
-# left out of the grammar rather than risk false commands.
-SPOKEN_FORMS = {"CT": "c t", "MRI": "m r i", "DICOM": "die com", "PACS": None}
+COMMAND_VOCAB = sorted({term for terms in INTENT_TERMS.values() for term in terms})
 
-GRAMMAR_EXTRA_WORDS = [
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-    "please", "by", "times",
-]
+# Words that start a log_event command; free text follows them. The Vosk
+# engine uses these to switch to free-form recognition for the rest.
+LOG_TRIGGERS = {"log", "record"}
+LOG_HEADER_WORDS = LOG_TRIGGERS | {"event", "milestone"}
 
-# One short natural sentence containing the key terms, for Whisper's
-# initial_prompt (it nudges spelling and word choice toward these terms).
+# How a term is said aloud, for the Vosk grammar: a grammar can only contain
+# words from the model's dictionary, and "hemostat" and "xray" are not in
+# vosk-model-small-en-us-0.15. Each spoken form must normalize back to the
+# term (asr/normalize.py SPELLINGS).
+SPOKEN_FORMS = {"CT": "c t", "MRI": "m r i", "X-ray": "x ray", "hemostat": "hemo stat"}
+
+# Small words the guide's commands are built with, plus the words needed to
+# say a zoom factor ("two x", "two times") or a number ("one hundred and
+# twenty", "one point five").
+GRAMMAR_FUNCTION_WORDS = ["the", "a", "me", "and", "by", "x", "times", "please"]
+GRAMMAR_NUMBER_WORDS = list(NUMBER_WORDS) + list(TENS) + ["hundred", "point"]
+
+# One natural sentence with the key terms, for Whisper's initial_prompt (it
+# nudges spelling and word choice toward these terms). Written from the
+# schema guide, avoiding the exact test sentences. Numbers are written as
+# digits so Whisper writes digits too.
 WHISPER_PROMPT = (
-    "In the DICOM viewer we zoom in, zoom out, pan left, right, up and down, rotate, flip, "
-    "reset, adjust contrast, brightness, window and level, use the lung window, bone window "
-    "or soft tissue, switch between axial, coronal and sagittal, go to the next slice or "
-    "previous slice, scroll the series, measure, annotate and undo on CT, MRI and PACS images."
+    "During surgery the team asks the robot to pass the scalpel, knife, ten blade, "
+    "Metzenbaum or iris scissors, hemostat, clamp, snap, forceps, tweezers or pickups, "
+    "to park, retract or standby the arm, to halt, freeze, stop or back off in an emergency, "
+    "to open, show, display, close or dismiss the CT, MRI or X-ray scan in the viewer, "
+    "to zoom in or out by 2.5x or magnify, to step to the next, previous or a numbered slice, "
+    "to log an event or record a milestone with a note or comment, "
+    "and to move or tilt the camera left, right, up, down, forward or backward "
+    "by 7 cm or 20 degrees, then reset or center it at home."
 )
 
+# A shorter variant to measure the latency cost of the prompt (Phase B):
+# only the terms Whisper is most likely to misspell or mishear.
+WHISPER_PROMPT_SHORT = (
+    "The robot passes the scalpel, Metzenbaum scissors, hemostat, forceps or pickups, "
+    "opens the CT, MRI or X-ray scan, zooms, magnifies, logs a milestone and tilts the camera."
+)
+
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _TERMS = sorted({tuple(normalize(t).split()) for t in COMMAND_VOCAB}, key=len, reverse=True)
 
 
 def vosk_grammar_phrases() -> list[str]:
-    """Allowed phrases for Vosk's restricted grammar, built only from this
-    file (never from test-set sentences). "[unk]" is added by the engine."""
-    phrases = []
+    """Allowed words for Vosk's restricted grammar, built only from this file
+    (never from test-set sentences). "[unk]" is added by the engine.
+
+    A Vosk grammar accepts any sequence of its phrases (checked: the word
+    list alone decodes "zoom in two x please"), so single words are enough
+    and no command sentence has to be written into the grammar."""
+    words: set[str] = set()
     for term in COMMAND_VOCAB:
-        spoken = SPOKEN_FORMS.get(term, term.lower())
-        if spoken:
-            phrases.append(spoken)
-    return phrases + GRAMMAR_EXTRA_WORDS
+        words.update(SPOKEN_FORMS.get(term, term.lower()).split())
+    words.update(GRAMMAR_FUNCTION_WORDS)
+    words.update(GRAMMAR_NUMBER_WORDS)
+    return sorted(words)
 
 
 def check_leakage(texts: list[str], references: list[str], what: str) -> None:
     """Fail if a test sentence appears (as a whole phrase) in any biasing
     text: grammar phrases or the prompt sentence. References that are
-    themselves a single vocab term ("Zoom in", "Undo") are allowed - they are
-    in the vocabulary because they are commands, not because of the test set."""
+    themselves a single vocab term ("Freeze", "Back off") are allowed - they
+    are in the vocabulary because they are commands, not because of the test
+    set."""
     vocab = {normalize(t) for t in COMMAND_VOCAB}
     padded = [f" {normalize(t)} " for t in texts]
     leaked = sorted({
@@ -80,14 +123,14 @@ def check_leakage(texts: list[str], references: list[str], what: str) -> None:
 
 
 def check_all_biasing_leakage(references: list[str]) -> None:
-    # The grammar is checked phrase by phrase: joining its entries would glue
-    # neighbours like "window" + "level" into the test sentence "window level".
     check_leakage(vosk_grammar_phrases(), references, "Vosk grammar")
     check_leakage([WHISPER_PROMPT], references, "Whisper prompt")
+    check_leakage([WHISPER_PROMPT_SHORT], references, "short Whisper prompt")
 
 
 def find_terms(normalized_text: str) -> list[str]:
-    """Vocab terms in order of appearance, each occurrence listed once."""
+    """Vocab terms and numbers in order of appearance, each occurrence
+    listed once."""
     tokens = normalized_text.split()
     found: list[str] = []
     i = 0
@@ -98,6 +141,8 @@ def find_terms(normalized_text: str) -> list[str]:
                 i += len(term)
                 break
         else:
+            if _NUMBER.fullmatch(tokens[i]):
+                found.append(tokens[i])
             i += 1
     return found
 
@@ -111,8 +156,15 @@ def term_counts(ref_normalized: str, hyp_normalized: str) -> tuple[int, int, int
 
 
 def command_group(ref_normalized: str) -> str:
-    """Cluster key for bootstrapping: the first vocab term in the reference,
-    so "Zoom in" and "Um, zoom in a little, please" land in one group.
+    """Fallback cluster key for bootstrapping when a clip has no intent in
+    its manifest `notes` column: the first vocab term in the reference.
     References without any vocab term form a group of their own."""
     terms = find_terms(ref_normalized)
     return terms[0] if terms else ref_normalized
+
+
+def cluster_key(notes: str, ref_normalized: str) -> str:
+    """Cluster for the bootstrap: the intent from the manifest `notes`
+    column (the phrase-list section, e.g. "pick_tool"), so "Hand scalpel"
+    and "Pass the hemostat" are resampled together."""
+    return notes or command_group(ref_normalized)

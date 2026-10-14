@@ -45,12 +45,14 @@ errors in plain terms, and prefer simple, readable code over clever code.
   score), Whisper base.en, beam 5, hot words (repetition loops, "zoom in" on
   pure noise).
 - **The command set changed.** The old image-viewer commands (pan, window,
-  axial, …) are replaced by the NLU contract. Consequences:
-  - `vocab.py` (term list, grammar, `WHISPER_PROMPT`) and `CORRECTIONS` in
-    `normalize.py` still describe the **old** commands → **Phase A**.
+  axial, …) are replaced by the NLU contract.
+  - **Phase A done (2026-10-14):** `vocab.py` and `normalize.py` rebuilt from
+    the schema, `CORRECTIONS` emptied, `log_event` strategy implemented,
+    28 unit tests in `src/asr/test/`. Details in `docs/ASR_FINDINGS.md`
+    ("Phase A").
   - The first test set (46 clips, one speaker, old commands) is **not in this
     repo** (recordings of people are never committed). New phrase lists are
-    ready in `data/asr/prompts/` → **Phase B**.
+    ready in `data/asr/prompts/` → **Phase B (next)**.
 - **The input changed.** DSP sends a continuous stream of 0.5 s chunks, not
   finished segments: ASR must detect speech start and end itself →
   **Phase C**.
@@ -151,27 +153,36 @@ Benchmark-only data (config name, processing time, RTF, RAM) goes to
 | `reset_camera` | "Reset camera", "Center view", "Camera home" | reset, center, view, home |
 | `unknown` | "It is raining outside", "Pass that thing", "Hello" | anything – transcribe faithfully |
 
-What this means for the ASR design (decide in Phase A, measure in Phase B):
+What this means for the ASR design (decided in Phase A, measure in Phase B):
 1. **`log_event` contains free text**, which a restricted Vosk grammar cannot
-   produce (out-of-grammar words become `[unk]`). Options: a free-form Vosk
-   recognizer next to the grammar recognizer on the same audio (same model,
-   loaded once), used when the grammar result starts with "log"/"record"; or
-   Whisper for `log_event`. Measure both.
-2. **Numbers:** the grammar needs number words (zero–nineteen, tens, hundred,
-   "point"); `normalize.words_to_digits` must handle "one point five" → 1.5
-   and "one hundred twenty" → 120 (today: up to 99 and "N hundred" only).
-   Agree with Khanh on the written form of factors ("2x" / "2 x" / "2 times")
-   and of "X-ray" (schema token `xray`).
+   produce (out-of-grammar words become `[unk]`). **Implemented:**
+   `VoskEngine(freeform_log=True)` (config `vosk-grammar+freeform-log`) – when
+   the grammar hears "log"/"record" among the first three words, a free-form
+   recognizer (same model) decodes the same audio; the header ("log event")
+   comes from the grammar, the words after it from the free-form result.
+   Whisper needs nothing special. Measure both on the `log_event` clips.
+2. **Numbers:** done. `words_to_digits` handles "one hundred (and) twenty" →
+   120 and "one point five" → 1.5; Whisper's "1.5x" keeps its decimal point
+   and is split to "1.5 x". **Written forms chosen (to confirm with Khanh):**
+   digits; factor "2 x" (a separate "x" token); "xray"; "centimeters" (also
+   for "cm"); "degrees" (also for "°").
 3. **Emergency commands are safety-critical:** recognise them when repeated,
    in noise, and with the lowest latency. Idea: Vosk partial results can spot
    "emergency stop" / "halt" / "freeze" before the end-of-utterance wait.
 4. **Synonyms:** recognise every synonym in the guide; NLU maps them.
-5. **Correction list:** `CORRECTIONS` was built for the old commands →
-   rebuild from errors on the new dev set only.
+5. **Correction list:** emptied (it was built for the old commands) →
+   rebuild from errors on the new dev set only. First candidate seen on
+   synthetic speech: the grammar heard "go **two** slice" for "go to slice".
 
 ## Engines (current setups – keep these settings)
 **1. Vosk** – `vosk-model-small-en-us-0.15` (`engines/vosk_engine.py`)
-- Command grammar built only from `vocab.py`, plus `[unk]`.
+- Command grammar built only from `vocab.py`, plus `[unk]`. It is a plain
+  word list: a Vosk grammar accepts any sequence of its entries, so no
+  command sentence has to be written into it. "hemostat" and "xray" are not
+  in the model's dictionary → grammar uses "hemo stat" / "x ray",
+  `normalize()` joins them back.
+- Word times keep counting across `Reset()`; the engine shifts them back to
+  0 per utterance (bug found and fixed in Phase A).
 - `--dither=0` in the model's `mfcc.conf` (the engine adds it) – otherwise the
   same audio gives different words.
 - One `KaldiRecognizer` per engine, `Reset()` after each utterance – a new
@@ -188,8 +199,9 @@ What this means for the ASR design (decide in Phase A, measure in Phase B):
 - Not streaming: needs our voice activity detection to cut utterances.
 - Says "you" on pure noise without the prompt; adds junk words when there is
   trailing silence → trim utterances tightly.
-- The prompt costs latency (0.35 → 0.87 s per clip on the laptop) → try a
-  shorter prompt. No hot words.
+- The prompt costs latency (0.35 → 0.87 s per clip on the laptop) → a
+  shorter prompt is ready as config `…+shortprompt` (`WHISPER_PROMPT_SHORT`).
+  No hot words.
 
 ## Finding speech in the 0.5 s chunk stream (Phase C design notes)
 - **Shared segmenter for both engines** (same boundaries → fair comparison):
@@ -222,14 +234,16 @@ src/asr/
   requirements.txt     # pinned dependencies of this module
   schema.py            # ASRResult / WordInfo + to_json() (output contract)
   audio.py             # load wav, downmix, resample to 16 kHz mono float32
-  normalize.py         # one normalize() for scoring + the JSON `normalized` field; CORRECTIONS (old)
-  vocab.py             # OLD vocabulary (Phase A) + term metrics, grammar builder, leakage check
+  normalize.py         # one normalize() for scoring + the JSON `normalized` field; CORRECTIONS (empty)
+  vocab.py             # terms per intent (schema), grammar words, prompt sentences, term metrics, leakage check
   metrics.py           # corpus WER, cluster bootstrap CI, paired differences
-  bench_configs.py     # 4 configs: whisper tiny beam1 (+prompt), vosk free-form / grammar
+  bench_configs.py     # 6 configs: whisper tiny beam1 (none / prompt / short prompt),
+                       #   vosk free-form / grammar / grammar + free-form for log_event
   engines/             # base.py, faster_whisper_engine.py, vosk_engine.py
+  test/                # unit tests (python -m unittest discover -s src/asr/test -v)
   scripts/
     record_testset.py  # record a phrase list -> data/asr/<list>/ + manifest
-    transcribe.py      # one file -> JSON on stdout (--config <name>)
+    transcribe.py      # file(s) -> one JSON line each on stdout (--config <name>, default vosk-grammar)
     benchmark.py       # configs x clip sets, one process per config -> src/asr/results/
     bench_worker.py    # used by benchmark.py
     compare_configs.py # paired bootstrap: which differences are real
@@ -243,11 +257,12 @@ data/asr/
 docs/ASR_FINDINGS.md   # findings log for the project report
 ```
 To be written: `segmenter.py`, `stream.py` (chunks in → JSON out),
-`scripts/simulate_stream.py`, tests in `src/asr/test/` (like `src/dsp/test/`).
+`scripts/simulate_stream.py`.
 
 ## Commands you'll use (from the repository root)
 ```powershell
 .venv\Scripts\activate
+python -m unittest discover -s src/asr/test -v                                # unit tests
 python src/asr/scripts/transcribe.py data/asr/sample_01.wav --config vosk-grammar
 python src/asr/scripts/record_testset.py --speaker <name> --prompts-file data/asr/prompts/commands_dev.txt
 python src/asr/scripts/make_noise_clips.py
@@ -282,13 +297,15 @@ only after recording (Phase B); until then the benchmark stops with a message.
   (`check_leakage` asserts this).
 
 ## Next phases
-A. **Vocabulary from the schema:** rewrite `vocab.py` (term list, grammar words
-   incl. numbers, spoken forms, new prompt sentence without test sentences);
-   extend `normalize.py` (bigger numbers, decimals, "x"/"times", X-ray); reset
-   `CORRECTIONS`; decide the `log_event` free-text strategy. Unit tests in
-   `src/asr/test/`.
+A. ✅ **Vocabulary from the schema** (done 2026-10-14): `vocab.py`,
+   `normalize.py`, empty `CORRECTIONS`, `log_event` free-form splice, unit
+   tests.
 B. **Record and re-measure:** `commands_dev` and `non_command` (held-out
-   ideally by other speakers); run the 4 configs on whole clips.
+   ideally by other speakers); run the 6 configs on whole clips. Check:
+   full vs short prompt (speed and recall), grammar with vs without the
+   free-form `log_event` pass, Whisper junk words at the end of clips with
+   trailing silence (seen with the prompt on synthetic speech), first
+   `CORRECTIONS` from dev errors only.
 C. **Streaming:** `segmenter.py` (Silero VAD, window by window) +
    `scripts/simulate_stream.py`; Vosk native endpointing as a variant;
    measure segmentation and latency.
@@ -307,9 +324,13 @@ G. (Optional) Noise robustness: mix OR noise at 20/10/5/0 dB SNR into the dev
   per chunk would help)? Is silence between commands sent continuously?
   Where do `data/asr/sample_01–05.wav` come from (recorded through the array
   and DSP chain?)
-- **NLU (Khanh):** `segment_end` proposal; written form of numbers and
-  factors ("2x"), "xray"; verbatim free text for `log_event` OK?; handling of
-  `confidence: null`; who maintains the command list?
+- **NLU (Khanh):** `segment_end` proposal; written forms we chose in
+  `normalized` (digits, "zoom in 2 x", "xray", "5 centimeters",
+  "15 degrees") OK?; verbatim free text for `log_event` OK?; handling of
+  `confidence: null` and of an empty `normalized` (Vosk grammar on
+  out-of-grammar speech gives text "[unk]", normalized "", confidence
+  1.0 – the "[unk]" marker counts in the mean); who maintains the command
+  list?
 - **Everyone:** is the 1 s budget for the whole chain or ASR alone? Memory
   left on the Pi next to DSP and NLU? Fallback: ASR on the workstation?
 

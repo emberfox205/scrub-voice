@@ -24,12 +24,16 @@ REPO_ROOT = SRC_DIR.parent
 sys.path.insert(0, str(SRC_DIR))
 
 from asr.metrics import cluster_resamples, paired_diff_ci
-from asr.vocab import command_group
+from asr.vocab import cluster_key
 
 DEFAULT_PAIRS = [
     # vocabulary help vs the same engine without it
     ("faster-whisper-tiny.en-beam1+prompt", "faster-whisper-tiny.en-beam1"),
     ("vosk-grammar", "vosk-freeform"),
+    # shorter prompt (faster) vs the full prompt
+    ("faster-whisper-tiny.en-beam1+shortprompt", "faster-whisper-tiny.en-beam1+prompt"),
+    # free-form recognizer for log_event free text vs grammar alone
+    ("vosk-grammar+freeform-log", "vosk-grammar"),
     # post-correction list vs none
     ("faster-whisper-tiny.en-beam1+corr", "faster-whisper-tiny.en-beam1"),
     ("vosk-freeform+corr", "vosk-freeform"),
@@ -57,7 +61,8 @@ def main() -> None:
     reference = next(iter(by_config.values()))
     ref_words = np.array([int(r["ref_words"]) for r in reference])
     terms_said = np.array([int(r["terms_said"]) for r in reference])
-    resamples = cluster_resamples([command_group(r["ref_norm"]) for r in reference], n=args.bootstrap, seed=0)
+    clusters = [cluster_key(r["notes"], r["ref_norm"]) for r in reference]
+    resamples = cluster_resamples(clusters, n=args.bootstrap, seed=0)
 
     def column(config: str, name: str) -> np.ndarray:
         return np.array([int(r[name]) for r in by_config[config]])
