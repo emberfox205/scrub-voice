@@ -98,6 +98,10 @@ class CommandDispatcher:
 
     def setup_sockets(self) -> None:
         """Initializes and binds ZeroMQ sockets for dual-channel routing and snapshot serving."""
+        if self.context is None or self.context.closed:
+            self.context = zmq.Context()
+            self._stopped = False
+
         clean_ipc_socket(self.nlu_addr)
         clean_ipc_socket(self.nlu_priority_addr)
         clean_ipc_socket(self.bus_addr)
@@ -105,26 +109,30 @@ class CommandDispatcher:
 
         # 1. Normal command channel (PULL)
         self.pull_sock = self.context.socket(zmq.PULL)
-        self.pull_sock.setsockopt(zmq.RCVHWM, 50)
+        # Modern PyZMQ property replaces legacy setsockopt(zmq.RCVHWM, 50)
+        self.pull_sock.rcvhwm = 50
         self.pull_sock.bind(self.nlu_addr)
         logger.info("NLU normal channel bound to %s (PULL, HWM=50)", self.nlu_addr)
 
         # 2. High-priority / emergency channel (PULL)
         self.priority_pull_sock = self.context.socket(zmq.PULL)
-        self.priority_pull_sock.setsockopt(zmq.RCVHWM, 50)
+        # Modern PyZMQ property replaces legacy setsockopt(zmq.RCVHWM, 50)
+        self.priority_pull_sock.rcvhwm = 50
         self.priority_pull_sock.bind(self.nlu_priority_addr)
         logger.info("NLU priority channel bound to %s (PULL, HWM=50)", self.nlu_priority_addr)
 
         # 3. Downstream distribution bus (PUB)
         self.pub_sock = self.context.socket(zmq.PUB)
-        self.pub_sock.setsockopt(zmq.SNDHWM, 100)
+        # Modern PyZMQ property replaces legacy setsockopt(zmq.SNDHWM, 100)
+        self.pub_sock.sndhwm = 100
         self.pub_sock.bind(self.bus_addr)
         logger.info("Command bus bound to %s (PUB)", self.bus_addr)
 
         # 4. State Snapshot Server (REP)
         self.rep_sock = self.context.socket(zmq.REP)
-        self.rep_sock.setsockopt(zmq.SNDTIMEO, 1000)
-        self.rep_sock.setsockopt(zmq.RCVTIMEO, 1000)
+        # Modern PyZMQ properties replace legacy setsockopt() timeouts
+        self.rep_sock.sndtimeo = 1000
+        self.rep_sock.rcvtimeo = 1000
         self.rep_sock.bind(self.snapshot_addr)
         logger.info("Snapshot server bound to %s (REP)", self.snapshot_addr)
 
@@ -260,8 +268,9 @@ class CommandDispatcher:
                             pass
                         clean_ipc_socket(self.snapshot_addr)
                         self.rep_sock = self.context.socket(zmq.REP)
-                        self.rep_sock.setsockopt(zmq.SNDTIMEO, 1000)
-                        self.rep_sock.setsockopt(zmq.RCVTIMEO, 1000)
+                        # Modern PyZMQ properties replace legacy setsockopt() timeouts
+                        self.rep_sock.sndtimeo = 1000
+                        self.rep_sock.rcvtimeo = 1000
                         self.rep_sock.bind(self.snapshot_addr)
                         poller.register(self.rep_sock, zmq.POLLIN)
         except (KeyboardInterrupt, SystemExit):
@@ -279,11 +288,21 @@ class CommandDispatcher:
                 return
             self._stopped = True
             self._running = False
-            try:
-                self.context.destroy(linger=0)
-            except Exception:
-                pass
+
+            # Explicitly close active sockets with zero linger
+            for sock in (self.pull_sock, self.priority_pull_sock, self.pub_sock, self.rep_sock):
+                if sock is not None:
+                    try:
+                        sock.close(linger=0)
+                    except Exception:
+                        pass
             self.pull_sock = self.priority_pull_sock = self.pub_sock = self.rep_sock = None
+
+            if self.context and not self.context.closed:
+                try:
+                    self.context.destroy(linger=0)
+                except Exception:
+                    pass
 
             clean_ipc_socket(self.nlu_addr)
             clean_ipc_socket(self.nlu_priority_addr)

@@ -38,6 +38,48 @@ logging.basicConfig(
 logger = logging.getLogger("monitor.server")
 
 
+class ConnectionManager:
+    """
+    Manages active WebSocket connections with dedicated per-client outbound queues.
+    Guarantees:
+    1. Single-writer invariant per WebSocket (prevents Starlette ASGI concurrent send crashes).
+    2. Head-of-line blocking elimination: slow or lagging browser clients do not delay others.
+    3. Thread-safe and task-safe lifecycle management.
+    """
+
+    def __init__(self, max_queue_size: int = 100) -> None:
+        self.max_queue_size = max_queue_size
+        self._queues: Dict[WebSocket, asyncio.Queue[str]] = {}
+
+    def connect(self, ws: WebSocket) -> asyncio.Queue[str]:
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self.max_queue_size)
+        self._queues[ws] = queue
+        return queue
+
+    def disconnect(self, ws: WebSocket) -> None:
+        self._queues.pop(ws, None)
+
+    def broadcast(self, message: str) -> None:
+        """Pushes message to all client queues; drops oldest frame if a client queue is full."""
+        for ws, queue in list(self._queues.items()):
+            try:
+                queue.put_nowait(message)
+            except asyncio.QueueFull:
+                logger.warning("WebSocket queue full for client, dropping oldest frame (slow consumer)")
+                try:
+                    _ = queue.get_nowait()
+                    queue.put_nowait(message)
+                except Exception:
+                    pass
+
+    @property
+    def active_connections(self) -> Set[WebSocket]:
+        return set(self._queues.keys())
+
+    def __len__(self) -> int:
+        return len(self._queues)
+
+
 def create_app(
     bus_addr: str = DEFAULT_BUS_ADDR,
     snapshot_addr: str = DEFAULT_SNAPSHOT_ADDR,
@@ -45,11 +87,11 @@ def create_app(
 ) -> FastAPI:
     """Application factory for the Monitor web server and WebSocket bridge."""
     bridge = MonitorBridge(bus_addr=bus_addr, snapshot_addr=snapshot_addr)
-    active_connections: Set[WebSocket] = set()
+    manager = ConnectionManager(max_queue_size=100)
 
     async def broadcast_event(topic: str, command: Dict[str, Any], state_dict: Dict[str, Any]) -> None:
-        """Broadcasts state and command updates to all connected WebSockets in parallel."""
-        if not active_connections:
+        """Broadcasts state and command updates to all connected WebSockets via isolated queues."""
+        if len(manager) == 0:
             return
 
         payload_str = orjson.dumps({
@@ -59,22 +101,7 @@ def create_app(
             "state": state_dict,
         }).decode("utf-8")
 
-        sockets = list(active_connections)
-        if not sockets:
-            return
-
-        async def _safe_send(ws: WebSocket) -> Optional[WebSocket]:
-            try:
-                await ws.send_text(payload_str)
-                return None
-            except Exception as e:
-                logger.debug("Failed sending to client, removing: %s", e)
-                return ws
-
-        results = await asyncio.gather(*(_safe_send(ws) for ws in sockets), return_exceptions=True)
-        dead_connections = {r for r in results if isinstance(r, WebSocket)}
-        if dead_connections:
-            active_connections.difference_update(dead_connections)
+        manager.broadcast(payload_str)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -90,8 +117,11 @@ def create_app(
 
     app = FastAPI(title="Scrub-Voice Monitor Gateway", lifespan=lifespan)
     app.state.bridge = bridge
-    app.state.active_connections = active_connections
+    app.state.manager = manager
+    app.state.active_connections = manager.active_connections
 
+    # HTTP middleware adds anti-caching headers for clinical dashboard and REST endpoints.
+    # Note: Starlette HTTP middleware intercepts standard HTTP requests only; WebSockets bypass it.
     @app.middleware("http")
     async def add_no_cache_headers(request, call_next):
         response = await call_next(request)
@@ -122,7 +152,7 @@ def create_app(
         """Returns monitor bridge connectivity and active subscriber counts."""
         return {
             "status": "healthy",
-            "active_clients": len(active_connections),
+            "active_clients": len(manager),
             "emergency_active": bridge.state.emergency_active,
             "bus_addr": bridge.bus_addr,
             "snapshot_addr": bridge.snapshot_addr,
@@ -130,31 +160,52 @@ def create_app(
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        """Full-duplex WebSocket channel for streaming real-time voice and state events."""
+        """
+        Full-duplex WebSocket channel for streaming real-time voice and state events.
+        Uses a dedicated sender task per connection to strictly prevent concurrent write collisions.
+        """
         await websocket.accept()
-        active_connections.add(websocket)
-        logger.info("WebSocket client connected. Total clients: %d", len(active_connections))
+        queue = manager.connect(websocket)
+        logger.info("WebSocket client connected. Total clients: %d", len(manager))
+
+        # Enqueue full initial state snapshot as first message to guarantee correct ordering
+        snapshot_msg = orjson.dumps({
+            "type": "snapshot",
+            "state": bridge.state.to_dict(),
+        }).decode("utf-8")
+        await queue.put(snapshot_msg)
+
+        async def _sender_loop() -> None:
+            """Dedicated sender coroutine ensures strictly sequential writes to the socket."""
+            try:
+                while True:
+                    msg = await queue.get()
+                    await websocket.send_text(msg)
+                    queue.task_done()
+            except (asyncio.CancelledError, WebSocketDisconnect):
+                pass
+            except Exception as send_err:
+                logger.debug("WebSocket send error: %s", send_err)
+
+        sender_task = asyncio.create_task(_sender_loop(), name="ws-sender")
 
         try:
-            # Immediately send full initial state snapshot upon connection
-            snapshot_msg = orjson.dumps({
-                "type": "snapshot",
-                "state": bridge.state.to_dict(),
-            }).decode("utf-8")
-            await websocket.send_text(snapshot_msg)
-
             while True:
                 data = await websocket.receive_text()
-                # Respond to client heartbeats
+                # Respond to client heartbeats via outbound queue to prevent concurrent write collisions
                 if data == "ping":
-                    await websocket.send_text("pong")
+                    try:
+                        queue.put_nowait("pong")
+                    except asyncio.QueueFull:
+                        pass
         except WebSocketDisconnect:
             pass
         except Exception as e:
-            logger.debug("WebSocket exception: %s", e)
+            logger.debug("WebSocket receiver exception: %s", e)
         finally:
-            active_connections.discard(websocket)
-            logger.info("WebSocket client disconnected. Remaining clients: %d", len(active_connections))
+            sender_task.cancel()
+            manager.disconnect(websocket)
+            logger.info("WebSocket client disconnected. Remaining clients: %d", len(manager))
 
     return app
 

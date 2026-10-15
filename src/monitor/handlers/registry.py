@@ -32,11 +32,20 @@ def handle_command(state: MonitorState, command: Dict[str, Any]) -> MonitorState
     """
     Applies an incoming NLU command to the given state using registered handlers.
     Updates metadata (last_command, last_updated) and handles unhandled intents safely.
+    Uses state's internal lock if available to ensure thread-safe mutation.
     """
     if not isinstance(command, dict):
         logger.warning("Rejected non-dict command payload: %s", type(command))
         return state
 
+    lock = getattr(state, "_lock", None)
+    if lock is not None:
+        with lock:
+            return _apply_command(state, command)
+    return _apply_command(state, command)
+
+
+def _apply_command(state: MonitorState, command: Dict[str, Any]) -> MonitorState:
     intent = command.get("intent", "unknown")
     status = command.get("status", "EXECUTE")
 

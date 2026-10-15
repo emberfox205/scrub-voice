@@ -51,7 +51,7 @@ class TestCommandDispatcher(unittest.TestCase):
         # Subscriber socket to verify dispatching
         cls.sub_sock = cls.client_ctx.socket(zmq.SUB)
         cls.sub_sock.connect(TEST_BUS_ADDR)
-        cls.sub_sock.setsockopt(zmq.SUBSCRIBE, b"")  # subscribe to all topics
+        cls.sub_sock.subscribe("")  # Modern PyZMQ helper to subscribe to all topics
 
         # Give ZeroMQ time to establish IPC connections
         time.sleep(0.2)

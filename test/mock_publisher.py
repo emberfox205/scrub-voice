@@ -28,7 +28,7 @@ import zmq
 
 # Dynamic path resolution according to AGENTS.md
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parent.parent
+REPO_ROOT = CURRENT_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -348,15 +348,17 @@ class MockCommandPublisher:
 
         # 1. Normal command channel
         self.push_sock = self.context.socket(zmq.PUSH)
-        self.push_sock.setsockopt(zmq.SNDHWM, 50)
-        self.push_sock.setsockopt(zmq.SNDTIMEO, 1000)
+        # Modern PyZMQ properties replace legacy setsockopt() calls
+        self.push_sock.sndhwm = 50
+        self.push_sock.sndtimeo = 1000
         self.push_sock.connect(self.nlu_addr)
         logger.info("Mock Publisher normal channel connected to %s (PUSH, HWM=50)", self.nlu_addr)
 
         # 2. High-priority / emergency channel
         self.priority_push_sock = self.context.socket(zmq.PUSH)
-        self.priority_push_sock.setsockopt(zmq.SNDHWM, 50)
-        self.priority_push_sock.setsockopt(zmq.SNDTIMEO, 1000)
+        # Modern PyZMQ properties replace legacy setsockopt() calls
+        self.priority_push_sock.sndhwm = 50
+        self.priority_push_sock.sndtimeo = 1000
         self.priority_push_sock.connect(self.nlu_priority_addr)
         logger.info("Mock Publisher priority channel connected to %s (PUSH, HWM=50)", self.nlu_priority_addr)
 

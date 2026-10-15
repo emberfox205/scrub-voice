@@ -7,6 +7,7 @@ the local MonitorState, and broadcasts updates to UI listeners.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import threading
@@ -45,6 +46,7 @@ class MonitorBridge:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._callbacks: List[Callable[[str, Dict[str, Any], Dict[str, Any]], Any]] = []
+        self._callbacks_lock = threading.Lock()
         self._recent_cmd_ids: deque = deque(maxlen=100)
         self._context = zmq.Context()
 
@@ -53,23 +55,30 @@ class MonitorBridge:
         self.loop = loop
 
     def add_listener(self, callback: Callable[[str, Dict[str, Any], Dict[str, Any]], Any]) -> None:
-        """Registers a callback (topic, command_payload, state_dict)."""
-        self._callbacks.append(callback)
+        """Registers a callback (topic, command_payload, state_dict) in a thread-safe manner."""
+        with self._callbacks_lock:
+            self._callbacks.append(callback)
 
     def remove_listener(self, callback: Callable[[str, Dict[str, Any], Dict[str, Any]], Any]) -> None:
-        """Unregisters a previously added callback."""
-        if callback in self._callbacks:
-            self._callbacks.remove(callback)
+        """Unregisters a previously added callback in a thread-safe manner."""
+        with self._callbacks_lock:
+            if callback in self._callbacks:
+                self._callbacks.remove(callback)
 
     def fetch_snapshot(self, timeout_ms: int = 1500) -> bool:
         """
         Queries the orchestrator snapshot server (REQ/REP) to hydrate the initial state.
         Returns True if successful, False if timed out or failed.
+        Uses modern PyZMQ socket property setters (rcvtimeo, sndtimeo, linger).
         """
+        if self._context is None or self._context.closed:
+            self._context = zmq.Context()
+
         req_sock = self._context.socket(zmq.REQ)
-        req_sock.setsockopt(zmq.RCVTIMEO, timeout_ms)
-        req_sock.setsockopt(zmq.SNDTIMEO, timeout_ms)
-        req_sock.setsockopt(zmq.LINGER, 0)
+        # Modern PyZMQ properties replace legacy setsockopt() calls
+        req_sock.rcvtimeo = timeout_ms
+        req_sock.sndtimeo = timeout_ms
+        req_sock.linger = 0
 
         try:
             req_sock.connect(self.snapshot_addr)
@@ -88,10 +97,11 @@ class MonitorBridge:
     def _sub_worker(self) -> None:
         """Worker thread for subscribing to ZeroMQ command bus."""
         sub_sock = self._context.socket(zmq.SUB)
-        sub_sock.setsockopt(zmq.RCVHWM, 200)
-        sub_sock.setsockopt(zmq.RCVTIMEO, 250)  # Allows regular check of self._running
+        # Modern PyZMQ properties replace legacy setsockopt() calls
+        sub_sock.rcvhwm = 200
+        sub_sock.rcvtimeo = 250  # Allows regular check of self._running
         sub_sock.connect(self.bus_addr)
-        sub_sock.setsockopt(zmq.SUBSCRIBE, b"")  # Listen to all topics
+        sub_sock.subscribe("")  # Modern helper method to listen to all topics
 
         logger.info("MonitorBridge subscriber connected to %s", self.bus_addr)
 
@@ -111,7 +121,7 @@ class MonitorBridge:
                 if cmd_id:
                     self._recent_cmd_ids.append(cmd_id)
 
-                # Update local state via intent handlers
+                # Update local state via intent handlers (thread-safe)
                 handle_command(self.state, payload)
                 state_dict = self.state.to_dict()
 
@@ -128,9 +138,13 @@ class MonitorBridge:
 
     def _dispatch_event(self, topic: str, command: Dict[str, Any], state_dict: Dict[str, Any]) -> None:
         """Dispatches an event to registered callbacks across thread boundaries."""
-        for cb in list(self._callbacks):
+        with self._callbacks_lock:
+            callbacks = list(self._callbacks)
+
+        for cb in callbacks:
             try:
-                if asyncio.iscoroutinefunction(cb):
+                # inspect.iscoroutinefunction replaces deprecated asyncio.iscoroutinefunction (Python 3.12+)
+                if inspect.iscoroutinefunction(cb):
                     if self.loop and self.loop.is_running():
                         fut = asyncio.run_coroutine_threadsafe(cb(topic, command, state_dict), self.loop)
                         fut.add_done_callback(lambda f: self._log_future_exception(f))
@@ -157,6 +171,9 @@ class MonitorBridge:
         if self._running:
             return
 
+        if self._context is None or self._context.closed:
+            self._context = zmq.Context()
+
         if fetch_initial_snapshot:
             self.fetch_snapshot()
 
@@ -166,13 +183,19 @@ class MonitorBridge:
         logger.info("MonitorBridge started successfully.")
 
     def stop(self) -> None:
-        """Stops the subscription worker and terminates context."""
+        """Stops the subscription worker without permanently destroying the context."""
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._thread = None
-        try:
-            self._context.destroy(linger=0)
-        except Exception:
-            pass
         logger.info("MonitorBridge stopped.")
+
+    def close(self) -> None:
+        """Stops the bridge and cleanly terminates the ZeroMQ context."""
+        self.stop()
+        if self._context and not self._context.closed:
+            try:
+                self._context.destroy(linger=0)
+            except Exception:
+                pass
+        logger.info("MonitorBridge context destroyed.")

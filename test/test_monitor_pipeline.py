@@ -29,7 +29,10 @@ from fastapi.testclient import TestClient
 from src.orchestrator.dispatcher import CommandDispatcher
 from src.monitor.bridge import MonitorBridge
 from src.monitor.server import create_app
-from src.nlu.mock_publisher import MockCommandPublisher, PRESETS
+try:
+    from test.mock_publisher import MockCommandPublisher, PRESETS
+except ImportError:
+    from mock_publisher import MockCommandPublisher, PRESETS
 
 TEST_NLU_ADDR = "ipc:///tmp/test_pipe_nlu.ipc"
 TEST_NLU_PRIORITY_ADDR = "ipc:///tmp/test_pipe_nlu_priority.ipc"
