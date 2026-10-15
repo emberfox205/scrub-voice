@@ -2,11 +2,19 @@ import os
 import socket
 import time
 import sys
+from pathlib import Path
+
+# Dynamic sys.path setup
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import rtde_control
 import rtde_receive
 
 # Accepts IP from CLI argument, environment variable, or defaults to 127.0.0.1 (local)
-ROBOT_IP = sys.argv[1] if len(sys.argv) > 1 else os.getenv("ROBOT_IP", "127.0.0.1")
+USE_MUJOCO = "--sim" in sys.argv or "--mujoco" in sys.argv
+ROBOT_IP = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("--") else os.getenv("ROBOT_IP", "127.0.0.1")
 DASHBOARD_PORT = 29999
 
 def ensure_robot_running(ip=ROBOT_IP, port=DASHBOARD_PORT):
@@ -15,7 +23,7 @@ def ensure_robot_running(ip=ROBOT_IP, port=DASHBOARD_PORT):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(5.0)
             s.connect((ip, port))
-            s.recv(1024)  # welcome message
+            #s.recv(1024)  # welcome message
             
             def send(cmd):
                 s.sendall((cmd + "\n").encode())
@@ -45,7 +53,49 @@ def ensure_robot_running(ip=ROBOT_IP, port=DASHBOARD_PORT):
         print(f"Notice: Dashboard check skipped ({e}). Proceeding to RTDE...")
     return False
 
+def run_mujoco_sim(headless=False):
+    """Runs hello_ur sequence on MuJoCo UR-10e simulation."""
+    from src.actuators.sim_ws.mujoco_controller import MujocoSimController
+    print("[Sim] Connecting to MuJoCo UR-10e simulation...")
+    sim = MujocoSimController(headless=headless)
+    if not headless:
+        sim.start_viewer()
+
+    q = sim.get_actual_q()
+    tcp = sim.get_actual_tcp_pose()
+    print("--------------------------------------------------")
+    print("Connected to MuJoCo successfully!")
+    print(f"Current Joint Angles (deg): {[round(val * 57.2958, 1) for val in q]}")
+    print(f"Current TCP Pose [X,Y,Z] (m): {[round(val, 3) for val in tcp[:3]]}")
+    print("--------------------------------------------------")
+
+    home_pose = [0.0, -1.57, 1.57, -1.57, -1.57, 0.0]
+    handover_pose = [0.6, -1.20, 1.20, -1.57, -1.57, 0.0]
+
+    print("Executing: Moving to Home Pose...")
+    sim.moveJ(home_pose, speed=0.8, acceleration=0.8)
+    time.sleep(1)
+
+    print("Executing: Moving to Sterile Handover Zone...")
+    sim.moveJ(handover_pose, speed=0.8, acceleration=0.8)
+    time.sleep(1)
+
+    print("Executing: Returning to Home Pose...")
+    sim.moveJ(home_pose, speed=0.8, acceleration=0.8)
+    time.sleep(0.5)
+
+    print("--------------------------------------------------")
+    print("MuJoCo motion test completed successfully!")
+    if not headless:
+        time.sleep(1)
+        sim.close_viewer()
+
 def main():
+    if USE_MUJOCO:
+        headless = "--headless" in sys.argv
+        run_mujoco_sim(headless=headless)
+        return
+
     print(f"Connecting to Universal Robots / URSim at {ROBOT_IP}...")
     
     # 1. Ensure robot is powered and brakes released

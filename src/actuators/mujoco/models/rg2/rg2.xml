@@ -1,0 +1,118 @@
+<mujoco model="onrobot_rg2">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <default>
+    <default class="rg2">
+      <geom group="2" contype="0" conaffinity="0"/>
+      <joint damping="0.5" armature="0.01" axis="0 0 1"/>
+    </default>
+    <default class="rg2_col">
+      <geom group="3" contype="1" conaffinity="1" friction="1.8 0.05 0.001" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh file="RG2_Hand_vis.STL" name="hand_vis"/>
+    <mesh file="RG2_Hand_col.STL" name="hand_col"/>
+    <mesh file="RG2_LeftMomentArm_vis.STL" name="l_moment_vis"/>
+    <mesh file="RG2_LeftMomentArm_col.STL" name="l_moment_col"/>
+    <mesh file="RG2_LeftFinger_vis.STL" name="l_finger_vis"/>
+    <mesh file="RG2_LeftFinger_col.STL" name="l_finger_col"/>
+    <mesh file="RG2_LeftTrussArm_vis.STL" name="l_truss_vis"/>
+    <mesh file="RG2_LeftTrussArm_col.STL" name="l_truss_col"/>
+    <mesh file="RG2_RightMomentArm_vis.STL" name="r_moment_vis"/>
+    <mesh file="RG2_RightMomentArm_col.STL" name="r_moment_col"/>
+    <mesh file="RG2_RightFinger_vis.STL" name="r_finger_vis"/>
+    <mesh file="RG2_RightFinger_col.STL" name="r_finger_col"/>
+    <mesh file="RG2_RightTrussArm_vis.STL" name="r_truss_vis"/>
+    <mesh file="RG2_RightTrussArm_col.STL" name="r_truss_col"/>
+
+    <material name="rg2_chassis" rgba="0.15 0.15 0.17 1" specular="0.4" shininess="0.3"/>
+    <material name="rg2_aluminum" rgba="0.65 0.65 0.68 1" specular="0.6" shininess="0.5"/>
+  </asset>
+
+  <worldbody>
+    <body name="hand_link" pos="0 0 0" childclass="rg2">
+      <inertial mass="1.68" pos="0.06 0 0" diaginertia="0.00086 0.0024 0.0026"/>
+      <geom type="mesh" mesh="hand_vis" material="rg2_chassis"/>
+      <geom class="rg2_col" type="mesh" mesh="hand_col"/>
+
+      <!-- Left Moment Arm -->
+      <body name="l_moment_arm_link" pos="0.105 0.017 0.010">
+        <inertial mass="0.16" pos="0.017 -0.006 0" diaginertia="0.000023 0.000072 0.000083"/>
+        <joint name="gripper_joint" range="-0.45 0.9"/>
+        <geom type="mesh" mesh="l_moment_vis" material="rg2_aluminum"/>
+        <geom class="rg2_col" type="mesh" mesh="l_moment_col"/>
+
+        <!-- Left Finger Link -->
+        <body name="l_finger_link" pos="0.049 0.026 0.000">
+          <inertial mass="0.08" pos="0.025 -0.01 0" diaginertia="0.000006 0.000025 0.000026"/>
+          <joint name="l_finger_2_joint" range="-0.9 0.45"/>
+          <geom type="mesh" mesh="l_finger_vis" material="rg2_aluminum"/>
+          <geom class="rg2_col" type="mesh" mesh="l_finger_col"/>
+        </body>
+      </body>
+
+      <!-- Left Truss Arm -->
+      <body name="l_truss_arm_link" pos="0.122 0.008 0.010">
+        <inertial mass="0.066" pos="0.023 0.012 0" diaginertia="0.000010 0.000024 0.000025"/>
+        <joint name="l_finger_passive_joint" range="-0.45 0.9"/>
+        <geom type="mesh" mesh="l_truss_vis" material="rg2_aluminum"/>
+        <geom class="rg2_col" type="mesh" mesh="l_truss_col"/>
+      </body>
+
+      <!-- Right Moment Arm -->
+      <body name="r_moment_arm_link" pos="0.105 -0.017 0.010">
+        <inertial mass="0.16" pos="0.017 0.006 0" diaginertia="0.000023 0.000072 0.000083"/>
+        <joint name="r_finger_1_joint" range="-0.9 0.45"/>
+        <geom type="mesh" mesh="r_moment_vis" material="rg2_aluminum"/>
+        <geom class="rg2_col" type="mesh" mesh="r_moment_col"/>
+
+        <!-- Right Finger Link -->
+        <body name="r_finger_link" pos="0.049 -0.026 0.000">
+          <inertial mass="0.08" pos="0.025 0.01 0" diaginertia="0.000006 0.000025 0.000026"/>
+          <joint name="r_finger_2_joint" range="-0.45 0.9"/>
+          <geom type="mesh" mesh="r_finger_vis" material="rg2_aluminum"/>
+          <geom class="rg2_col" type="mesh" mesh="r_finger_col"/>
+        </body>
+      </body>
+
+      <!-- Right Truss Arm -->
+      <body name="r_truss_arm_link" pos="0.122 -0.008 0.010">
+        <inertial mass="0.066" pos="0.023 -0.012 0" diaginertia="0.000010 0.000024 0.000025"/>
+        <joint name="r_finger_passive_joint" range="-0.9 0.45"/>
+        <geom type="mesh" mesh="r_truss_vis" material="rg2_aluminum"/>
+        <geom class="rg2_col" type="mesh" mesh="r_truss_col"/>
+      </body>
+
+      <!-- TCP Site -->
+      <site name="rg2_tcp" pos="0.20 0 0.01" size="0.005" rgba="1 0 0 0.8"/>
+    </body>
+  </worldbody>
+
+  <equality>
+    <joint joint1="gripper_joint" joint2="l_finger_2_joint" polycoef="0 -1 0 0 0"/>
+    <joint joint1="gripper_joint" joint2="r_finger_1_joint" polycoef="0 -1 0 0 0"/>
+    <joint joint1="gripper_joint" joint2="r_finger_2_joint" polycoef="0 1 0 0 0"/>
+    <joint joint1="gripper_joint" joint2="l_finger_passive_joint" polycoef="0 1 0 0 0"/>
+    <joint joint1="gripper_joint" joint2="r_finger_passive_joint" polycoef="0 -1 0 0 0"/>
+  </equality>
+
+  <contact>
+    <exclude body1="hand_link" body2="l_moment_arm_link"/>
+    <exclude body1="hand_link" body2="l_truss_arm_link"/>
+    <exclude body1="hand_link" body2="r_moment_arm_link"/>
+    <exclude body1="hand_link" body2="r_truss_arm_link"/>
+    <exclude body1="l_moment_arm_link" body2="l_truss_arm_link"/>
+    <exclude body1="l_moment_arm_link" body2="l_finger_link"/>
+    <exclude body1="l_moment_arm_link" body2="r_moment_arm_link"/>
+    <exclude body1="l_finger_link" body2="l_truss_arm_link"/>
+    <exclude body1="r_moment_arm_link" body2="r_truss_arm_link"/>
+    <exclude body1="r_moment_arm_link" body2="r_finger_link"/>
+    <exclude body1="r_finger_link" body2="r_truss_arm_link"/>
+  </contact>
+
+  <actuator>
+    <position name="rg2_actuator" joint="gripper_joint" ctrlrange="-0.45 0.8" kp="60" kv="6" forcerange="-40 40"/>
+  </actuator>
+</mujoco>

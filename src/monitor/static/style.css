@@ -1,0 +1,589 @@
+/*
+  Scrub-Voice Intraoperative Surgical Monitor
+  Design Specification: IBM Carbon Design System (g100 Dark Theme)
+  Imaging Layout: OHIF Viewer DICOM Layout Standards
+  100% Offline Air-Gapped — Zero External CDN / Web Font Dependencies
+*/
+
+:root {
+  /* IBM Carbon g100 Dark Theme Tokens */
+  --cds-background: #161616;
+  --cds-layer-01: #262626;
+  --cds-layer-02: #393939;
+  --cds-border-subtle: #393939;
+  --cds-border-strong: #6f6f6f;
+  --cds-canvas-bg: #000000;
+
+  /* IBM Carbon Typography Tokens */
+  --cds-text-primary: #f4f4f4;
+  --cds-text-secondary: #c6c6c6;
+  --cds-text-muted: #8d8d8d;
+  --cds-text-helper: #6f6f6f;
+
+  /* Gripper Active Tool Status Text Token (Flat Off-White) */
+  --tool-status-offwhite: #f4f4f4;
+
+  /* Carbon Status Feedback Tokens (Muted, Non-Glowing) */
+  --status-normal: #42be65;      /* Carbon green-50 */
+  --status-standby: #8d8d8d;     /* Neutral gray */
+  --status-warning: #f1c21b;     /* Carbon yellow-30 */
+  --status-critical: #fa4d56;    /* Carbon red-50 */
+
+  /* Strict Sans-Serif Font Stack (Monospace Banned) */
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Universal Reset: Eliminate Rounded Corners and Floating Elevations */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background-color: var(--cds-background);
+  color: var(--cds-text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Numeric Alignment Utility (Clean Sans Tabular Numbers, NOT Monospace) */
+.tabular-nums, .data-val, .metric-badge, .j-deg, .hud-corner, .col-time {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   1. HEADER BAR (~40px Height)
+   ========================================================================== */
+.header-bar {
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  background-color: var(--cds-background);
+  border-bottom: 1px solid var(--cds-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.system-title {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--cds-text-primary);
+  text-transform: uppercase;
+}
+
+.header-center.voice-status-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: var(--cds-layer-01);
+  border: 1px solid var(--cds-border-subtle);
+  padding: 0 10px;
+  height: 28px;
+  min-width: 0;
+}
+
+.transcript-display {
+  flex: 1;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--cds-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+
+.voice-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Matching Metric Badges (Confidence and Latency) */
+.metric-badge {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  background-color: var(--cds-layer-01);
+  border: 1px solid var(--cds-border-subtle);
+  color: var(--cds-text-secondary);
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   2. MAIN WORKSPACE LAYOUT (Edge-to-Edge Grid with 1px Hairline Dividers)
+   ========================================================================== */
+.main-layout {
+  height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  background-color: var(--cds-background);
+}
+
+.split-workspace {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 7fr 3fr;
+  gap: 0;
+  min-height: 0;
+}
+
+@media (max-width: 1200px) {
+  .split-workspace {
+    grid-template-columns: 6.5fr 3.5fr;
+  }
+}
+
+/* Generic Panel Header */
+.panel-header {
+  height: 28px;
+  background-color: var(--cds-layer-01);
+  border-bottom: 1px solid var(--cds-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--cds-text-secondary);
+  text-transform: uppercase;
+}
+
+/* Status Tags */
+.status-tag {
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border: 1px solid var(--cds-border-subtle);
+}
+
+.status-tag.standby {
+  color: var(--status-standby);
+  background-color: transparent;
+}
+
+.status-tag.normal {
+  color: var(--status-normal);
+  border-color: rgba(66, 190, 101, 0.4);
+}
+
+.status-tag.warning {
+  color: var(--status-warning);
+  background-color: rgba(241, 194, 27, 0.12);
+  border-color: rgba(241, 194, 27, 0.4);
+}
+
+.status-tag.critical {
+  color: var(--status-critical);
+  background-color: rgba(250, 77, 86, 0.12);
+  border-color: rgba(250, 77, 86, 0.4);
+}
+
+/* ==========================================================================
+   3. DIAGNOSTIC IMAGING VIEWPORT (OHIF DICOM Standard, Pure Pitch Black)
+   ========================================================================== */
+.viewport-panel {
+  background-color: var(--cds-canvas-bg);
+  border-right: 1px solid var(--cds-border-subtle);
+  border-bottom: 1px solid var(--cds-border-subtle);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.viewport-canvas-container {
+  flex: 1;
+  position: relative;
+  background-color: var(--cds-canvas-bg);
+  overflow: hidden;
+  min-height: 0;
+}
+
+#dicomCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background-color: #000000;
+}
+
+/* OHIF Essential Corner HUD Overlays (Sans-serif, Muted, No Card Boxes) */
+.hud-corner {
+  position: absolute;
+  padding: 4px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cds-text-muted);
+  line-height: 1.4;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.hud-corner span, .hud-corner strong {
+  color: var(--cds-text-primary);
+  font-weight: 600;
+}
+
+.hud-corner.top-left {
+  top: 8px;
+  left: 8px;
+}
+
+.hud-corner.top-right {
+  top: 8px;
+  right: 8px;
+  text-align: right;
+}
+
+.hud-corner.bottom-left {
+  bottom: 8px;
+  left: 8px;
+}
+
+.hud-corner.bottom-right {
+  bottom: 8px;
+  right: 8px;
+  text-align: right;
+}
+
+/* ==========================================================================
+   4. SIDEBAR COLUMN: CAMERA VIEWPORT & SUBSYSTEM TELEMETRY
+   ========================================================================== */
+.sidebar-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--cds-border-subtle);
+  background-color: var(--cds-background);
+}
+
+/* Surgical Cavity Camera: Minimal Empty Viewport */
+.camera-panel {
+  background-color: var(--cds-canvas-bg);
+  border-bottom: 1px solid var(--cds-border-subtle);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 150px;
+}
+
+.camera-canvas-container {
+  width: 100%;
+  height: 100%;
+  background-color: var(--cds-canvas-bg);
+  position: relative;
+  overflow: hidden;
+}
+
+.camera-feed-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cam-center-text {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cds-text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Subsystem Telemetry Panel */
+.telemetry-panel {
+  flex: 1;
+  background-color: var(--cds-background);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.telemetry-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.subsystem-section {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--cds-border-subtle);
+}
+
+.subsystem-section:last-child {
+  border-bottom: none;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.section-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--cds-text-secondary);
+}
+
+.data-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.data-row .label {
+  color: var(--cds-text-muted);
+  font-weight: 600;
+}
+
+.data-val {
+  color: var(--cds-text-primary);
+  font-family: var(--font-sans);
+  font-size: 10px;
+}
+
+/* RG-2 Active Tool: Strict Flat Off-White (No Cyan, Blue, or Orange) */
+.tool-active {
+  color: var(--tool-status-offwhite) !important;
+  font-weight: 600;
+}
+
+/* Joint Angles Grid (J1 - J6) */
+.joints-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--cds-border-subtle);
+}
+
+.joint-cell {
+  background-color: var(--cds-layer-01);
+  border: 1px solid var(--cds-border-subtle);
+  padding: 4px 6px;
+}
+
+.joint-info {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-sans);
+  font-size: 9px;
+  margin-bottom: 3px;
+}
+
+.j-id {
+  color: var(--cds-text-muted);
+  font-weight: 700;
+}
+
+.j-deg {
+  color: var(--cds-text-secondary);
+  font-family: var(--font-sans);
+}
+
+.mini-bar {
+  height: 3px;
+  background-color: var(--cds-background);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background-color: var(--cds-text-muted);
+}
+
+/* Flat Threshold Meters */
+.meter-val-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.threshold-meter {
+  width: 70px;
+  height: 4px;
+  background-color: var(--cds-layer-01);
+  border: 1px solid var(--cds-border-subtle);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background-color: var(--cds-text-muted);
+  transition: width 0.15s ease-out;
+}
+
+/* ==========================================================================
+   5. BOTTOM SECTION: EMR VOICE AUDIT LOG TERMINAL (Fixed ~130px)
+   ========================================================================== */
+.audit-panel {
+  height: 130px;
+  min-height: 130px;
+  max-height: 130px;
+  background-color: var(--cds-background);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.audit-table-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+.audit-table thead {
+  position: sticky;
+  top: 0;
+  background-color: var(--cds-layer-01);
+  z-index: 5;
+}
+
+.audit-table th {
+  text-align: left;
+  padding: 4px 8px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--cds-text-muted);
+  border-bottom: 1px solid var(--cds-border-subtle);
+}
+
+.audit-table td {
+  padding: 4px 8px;
+  height: 24px;
+  border-bottom: 1px solid var(--cds-border-subtle);
+  color: var(--cds-text-secondary);
+  font-family: var(--font-sans);
+}
+
+.audit-table tbody tr:nth-child(even) {
+  background-color: #1a1a1a;
+}
+
+.audit-table tbody tr:nth-child(odd) {
+  background-color: var(--cds-background);
+}
+
+.col-time {
+  width: 110px;
+  color: var(--cds-text-muted);
+}
+
+.col-trigger {
+  color: var(--cds-text-primary);
+  font-weight: 500;
+}
+
+.col-intent {
+  width: 180px;
+  font-family: var(--font-sans);
+  color: var(--cds-text-secondary);
+}
+
+.col-status {
+  width: 90px;
+}
+
+.table-status-tag {
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border: 1px solid var(--cds-border-subtle);
+}
+
+.table-status-tag.status-normal {
+  color: var(--status-normal);
+  border-color: rgba(66, 190, 101, 0.4);
+}
+
+.table-status-tag.status-warning {
+  color: var(--status-warning);
+  border-color: rgba(241, 194, 27, 0.4);
+}
+
+.table-status-tag.status-critical {
+  color: var(--status-critical);
+  border-color: rgba(250, 77, 86, 0.4);
+}
+
+.table-status-tag.status-standby {
+  color: var(--status-standby);
+  border-color: var(--cds-border-subtle);
+}
+
+.empty-log-msg {
+  text-align: center;
+  color: var(--cds-text-muted);
+  padding: 24px;
+  font-style: italic;
+}
