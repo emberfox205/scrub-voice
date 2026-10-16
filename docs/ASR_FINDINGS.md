@@ -102,6 +102,11 @@ model) got 54 of 60 right, writes everyday talk more faithfully, but is
 - Tested with **one speaker** (Josias), on clean recordings, and the
   settings were tuned on the same recordings → real numbers will be lower.
 - **Not yet run on the Raspberry Pi** – speed there still to be measured.
+- **The half-second pieces cost time:** the end of speech is only noticed
+  once the next piece is complete and silent. Measured from the end of
+  speech to arrival at language understanding: 0.6–1.0 s – of which speech
+  recognition itself takes only 0.04 s. Sending "end" as soon as the
+  speech stops (not at the end of a piece) would save most of it.
 - The very first "log event" after start-up takes about 0.6 s longer.
 
 How to connect and run it: **`docs/ASR_GUIDE.md`**.

@@ -240,6 +240,9 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
   marks speech chunks, like the DSP).
 - Measured (laptop, fake DSP over ZeroMQ): JSON 0.03 s after a DSP "end"
   message, 0.94 s when relying on the timeout → DSP should send "end".
+- End of speech → NLU measured 0.6–1.0 s with whole 0.5 s chunks (ASR's
+  share 0.04 s): the chunk size dominates the latency budget. Ask DSP to
+  send "end" / a shorter last chunk as soon as speech stops.
 - The first "log event" of a session takes ~0.6 s extra (one-time setup in
   Vosk's free-speech model; warming up with silence/noise did not help).
 - Not done (ideas, only if needed): emergency fast path with Vosk partial
@@ -261,7 +264,8 @@ src/asr/
   test/                # unit tests (python -m unittest discover -s src/asr/test -v)
   scripts/
     record_testset.py  # record a phrase list -> data/asr/<list>/ + manifest (--redo "<phrase>")
-    run_asr.py         # the ASR service: ZeroMQ DSP -> ASR -> NLU, or --wav simulation
+    run_asr.py         # the ASR service: ZeroMQ DSP -> ASR -> NLU, or --wav simulation (--send: also to NLU)
+    listen_asr.py      # stand-in NLU: prints what ASR sends (+ end of speech -> arrival time)
     transcribe.py      # file(s) -> one JSON line each on stdout (default: PRODUCTION_CONFIG)
     benchmark.py       # configs x clip sets, one process per config -> src/asr/results/
     bench_worker.py    # used by benchmark.py
@@ -283,6 +287,8 @@ docs/ASR_GUIDE.md      # interface for DSP and NLU teammates, how to run
 .venv\Scripts\activate
 python -m unittest discover -s src/asr/test -v                                # unit tests
 python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav                # stream simulation
+python src/asr/scripts/listen_asr.py                                          # stand-in NLU (terminal 1)
+python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav --send         # ASR -> NLU test (terminal 2)
 python src/asr/scripts/run_asr.py                                             # service (Pi; ipc:// is Linux-only)
 python src/asr/scripts/transcribe.py data/asr/sample_01.wav
 python src/asr/scripts/record_testset.py --speaker <name> --prompts-file data/asr/prompts/commands_dev.txt

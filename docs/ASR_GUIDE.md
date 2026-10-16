@@ -36,9 +36,15 @@ Address: `SCRUB_AUDIO_ADDR` (default `ipc:///tmp/scrub_audio.ipc`).
   before it knows the command is over (measured: JSON after 0.94 s instead
   of 0.03 s).
 * A gap in `capture_time` (a missing chunk) also ends the utterance.
+* **Timing:** with 0.5 s chunks, the end of speech is only noticed when the
+  next chunk is complete and silent. Measured end of speech → NLU:
+  0.6–1.0 s, of which ASR itself takes 0.04 s. Faster: send `"end"` (or a
+  shorter last chunk – any length is accepted) as soon as your detector
+  (32 ms steps) hears the speech stop.
 * Utterances longer than 15 s are cut (safety net if the detector sticks).
 
-Python example (DSP side):
+Python example (DSP side; the receiving side for NLU is in
+`src/asr/scripts/listen_asr.py`):
 
 ```python
 import orjson, zmq
@@ -113,6 +119,11 @@ python src/asr/scripts/run_asr.py
 
 # simulation without the microphone array: plays wav files as a DSP stream, prints JSON
 python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav
+
+# test ASR -> NLU without the DSP: a stand-in NLU prints what arrives,
+# the simulation plays the files in real time and sends the results
+python src/asr/scripts/listen_asr.py                                  # terminal 1
+python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav --send # terminal 2
 
 # one file -> JSON
 python src/asr/scripts/transcribe.py some_command.wav

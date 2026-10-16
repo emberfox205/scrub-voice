@@ -12,6 +12,10 @@ Two modes, from the repository root:
     # Several files are played one after the other as one stream.
     python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav
 
+    # Same, but also send the results to NLU (played in real time, so the
+    # timestamps are real): tests ASR -> NLU without the DSP
+    python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav --send
+
 Addresses (environment variables, same style as src/orchestrator/):
     SCRUB_AUDIO_ADDR  ASR binds a PULL socket here; DSP connects a PUSH socket
                       (default ipc:///tmp/scrub_audio.ipc)
@@ -47,10 +51,23 @@ def log_result(result, seconds: float) -> None:
                 f"transcribed in {seconds:.2f} s)")
 
 
-def simulate(stream: UtteranceStream, wav_paths: list[Path]) -> None:
+def open_push(asr_addr: str):
+    """PUSH socket to NLU (NLU binds a PULL socket at asr_addr)."""
+    import zmq
+
+    push = zmq.Context.instance().socket(zmq.PUSH)
+    push.connect(asr_addr)
+    return push
+
+
+def simulate(stream: UtteranceStream, wav_paths: list[Path], push=None) -> None:
     """Play wav files as a DSP chunk stream and print one JSON line per
     utterance. Speech chunks are found with the Silero voice detector that
-    ships with faster-whisper (the DSP uses Silero too)."""
+    ships with faster-whisper (the DSP uses Silero too).
+
+    With a push socket, every result is also sent to NLU, and the files are
+    played in real time: otherwise segment_start would lie in the future and
+    NLU's latency would come out negative."""
     from faster_whisper.vad import VadOptions, get_speech_timestamps
 
     audio = np.concatenate([load_audio(p) for p in wav_paths])
@@ -64,8 +81,12 @@ def simulate(stream: UtteranceStream, wav_paths: list[Path]) -> None:
         if result is not None:
             log_result(result, time.perf_counter() - started)
             print(result.to_json(), flush=True)
+            if push is not None:
+                push.send(result.to_json().encode("utf-8"))
 
     for i in range(0, len(audio) - chunk_len + 1, chunk_len):
+        if push is not None:  # real time: wait until this chunk would be recorded completely
+            time.sleep(max(0.0, clock + (i + chunk_len) / TARGET_SR - time.time()))
         has_speech = any(s["start"] < i + chunk_len and s["end"] > i for s in speech)
         started = time.perf_counter()
         if has_speech:
@@ -86,11 +107,10 @@ def serve(stream: UtteranceStream, audio_addr: str, asr_addr: str, end_timeout_s
     import orjson
     import zmq
 
-    context = zmq.Context()
+    context = zmq.Context.instance()
     pull = context.socket(zmq.PULL)
     pull.bind(audio_addr)
-    push = context.socket(zmq.PUSH)
-    push.connect(asr_addr)
+    push = open_push(asr_addr)
     logger.info(f"Listening for DSP chunks on {audio_addr}, sending results to {asr_addr}")
 
     def send(result, started: float) -> None:
@@ -128,6 +148,7 @@ def serve(stream: UtteranceStream, audio_addr: str, asr_addr: str, end_timeout_s
 def main() -> None:
     parser = argparse.ArgumentParser(description="ASR stage: DSP chunks in, one JSON per utterance out")
     parser.add_argument("--wav", type=Path, nargs="+", help="Simulate the DSP stream from wav file(s) and print JSON")
+    parser.add_argument("--send", action="store_true", help="With --wav: also send the results to NLU (SCRUB_ASR_ADDR)")
     parser.add_argument("--config", default=PRODUCTION_CONFIG, choices=list(CONFIGS))
     parser.add_argument("--audio-addr", default=DEFAULT_AUDIO_ADDR)
     parser.add_argument("--asr-addr", default=DEFAULT_ASR_ADDR)
@@ -139,7 +160,12 @@ def main() -> None:
     stream = UtteranceStream(CONFIGS[args.config]())
     logger.info(f"Engine '{args.config}' loaded in {time.perf_counter() - started:.1f} s")
     if args.wav:
-        simulate(stream, args.wav)
+        push = open_push(args.asr_addr) if args.send else None
+        if push is not None:
+            logger.info(f"Sending results to {args.asr_addr} (playing in real time)")
+        simulate(stream, args.wav, push)
+        if push is not None:
+            push.close(linger=2000)  # give queued messages time to reach NLU
     else:
         serve(stream, args.audio_addr, args.asr_addr, args.end_timeout)
 
