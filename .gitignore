@@ -42,3 +42,11 @@ Thumbs.db
 
 # Generated audio outputs
 data/dsp/output/
+
+# ASR models, benchmark results and recordings
+src/asr/models/
+src/asr/results/
+data/asr/commands_dev/
+data/asr/commands_heldout/
+data/asr/non_command/
+data/asr/noise_only/

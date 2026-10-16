@@ -1,7 +1,0 @@
-# ASR test recordings are recordings of people and are never committed;
-# generated noise clips can be recreated with src/asr/scripts/make_noise_clips.py.
-# Only the phrase lists in prompts/ are tracked.
-commands_dev/
-commands_heldout/
-non_command/
-noise_only/

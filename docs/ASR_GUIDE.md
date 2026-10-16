@@ -112,7 +112,7 @@ Things NLU should know:
 ```bash
 # once, from the repository root
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -r src/asr/requirements.txt               # model downloads on first start, then offline
+pip install -r requirements.txt                       # model downloads on first start, then offline
 
 # service (pipeline)
 python src/asr/scripts/run_asr.py

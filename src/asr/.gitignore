@@ -1,7 +1,0 @@
-# Downloaded models (Whisper tiny.en, Vosk small) - too large for git;
-# the engines download them here on first use.
-models/
-
-# Benchmark outputs (summary.csv, per_clip.csv, raw/, run.log, ...).
-# Findings worth keeping go into docs/ASR_FINDINGS.md.
-results/
