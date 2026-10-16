@@ -3,7 +3,8 @@ grammar (see src/asr/CLAUDE.md "Engines to compare").
 
 Confidence: per-word `conf` is a real signal (it drops on words Vosk gets
 wrong); the transcript confidence is the mean word confidence, as src/asr/CLAUDE.md
-specifies for Vosk.
+specifies for Vosk - without "[unk]" words, and null if only "[unk]" was
+heard.
 
 Setup choices, each found while benchmarking (details in docs/ASR_FINDINGS.md):
 - One loaded model per process. Loading a second `vosk.Model` after freeing
@@ -150,6 +151,9 @@ class VoskEngine:
                     self.dropped_phrases.append(phrase)
             self.recognizer = _Recognizer(self.model, phrases + ["[unk]"])
             if freeform_log:
+                # Note: the first "log event" of a session takes ~0.6 s longer
+                # (one-time setup inside Vosk, laptop). Warming up with silence
+                # or noise did not help; only real speech triggers it.
                 self.freeform = _Recognizer(self.model)
         else:
             self.recognizer = _Recognizer(self.model)
@@ -168,7 +172,10 @@ class VoskEngine:
             WordInfo(word=w["word"], start=w["start"], end=w["end"], confidence=w["conf"])
             for w in vosk_words
         ]
-        confidence = float(np.mean([w.confidence for w in words])) if words else None
+        # "[unk]" (speech outside the grammar) gets conf 1.0 from Vosk, so an
+        # utterance of only "[unk]" would claim full confidence: leave it out.
+        recognized = [w.confidence for w in words if w.word != "[unk]"]
+        confidence = float(np.mean(recognized)) if recognized else None
 
         return ASRResult(
             text=text,

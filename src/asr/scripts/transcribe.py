@@ -12,13 +12,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # src/ on sys.path, like the other modules
 
 from asr.audio import load_audio
-from asr.bench_configs import CONFIGS
+from asr.bench_configs import CONFIGS, PRODUCTION_CONFIG
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Transcribe audio files to ASR JSON")
     parser.add_argument("wav_paths", type=Path, nargs="+")
-    parser.add_argument("--config", default="vosk-grammar", choices=list(CONFIGS))
+    parser.add_argument("--config", default=PRODUCTION_CONFIG, choices=list(CONFIGS))
     args = parser.parse_args()
 
     engine = CONFIGS[args.config]()

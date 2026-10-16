@@ -7,3 +7,6 @@ scipy==1.13.1
 vosk==0.3.45
 jiwer==3.0.4
 psutil==6.0.0
+# Service mode of scripts/run_asr.py (ZeroMQ bus, same packages as the root requirements.txt)
+pyzmq==27.2.0
+orjson==3.13.0

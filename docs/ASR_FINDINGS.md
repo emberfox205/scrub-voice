@@ -13,6 +13,48 @@
 > point to that local project folder (owner: Josias) and are not part of the
 > repo. The module itself lives in `src/asr/`.
 
+## Decision: Vosk with the command grammar (2026-10-16)
+
+Testing is closed. The pipeline uses **Vosk + command grammar + free-speech
+pass for "log event"** (config `vosk-grammar+freeform-log`). How to connect
+to it: `docs/ASR_GUIDE.md`.
+
+### All engines at a glance
+Current command list, development set (60 commands, one speaker; numbers
+are optimistic because settings were tuned on these recordings). "Fully
+right" = every command word and number correct, nothing invented.
+
+| engine (setup) | commands fully right | command words found | invented command words | false commands on everyday talk | output on pure noise | seconds per command (laptop) | memory |
+|---|---|---|---|---|---|---|---|
+| **Vosk + grammar + free-speech for "log event"** ✅ | **59 / 60** | **98.6%** | 1.4% | 1 of 12 | silent | **0.07** | 261 MB |
+| Vosk + grammar | 57 / 60 | 98.6% | 2.9% | 1 of 12 | silent | 0.07 | **217 MB** |
+| Whisper Tiny + short prompt + corrections | 54 / 60 | 95.7% | **0.8%** | **0 of 12** | silent | 0.42 | 327 MB |
+| Whisper Tiny + long prompt + corrections | 52 / 60 | 96.4% | 2.9% | 0 of 12 | silent | 0.78 | 327 MB |
+| Vosk free speech + corrections | 50 / 60 | 92.0% | 0.8% | 0 of 12 | says "huh" (33%) | 0.09 | 344 MB |
+| Whisper Tiny + corrections | 49 / 60 | 91.3% | 1.6% | 0 of 12 | silent | 0.42 | 325 MB |
+| Vosk free speech (no help) | 41 / 60 | 84.1% | 0.9% | 0 of 12 | says "huh" (33%) | 0.09 | 344 MB |
+| Whisper Tiny (no help) | 40 / 60 | 83.3% | 1.7% | 0 of 12 | silent | 0.42 | 325 MB |
+
+Dropped earlier, measured on the old command list (46 clips): Whisper Base
+(not better than Tiny, twice as slow), Moonshine Tiny / Small (no
+confidence score, does not fit our stream, Small 1.85 s per command),
+Whisper with hot words (repeats itself, says "zoom in" on pure noise).
+
+### Why Vosk
+| what matters for our place in the pipeline | Vosk + grammar | Whisper Tiny + prompt |
+|---|---|---|
+| Commands right (incl. all emergency commands) | **59 / 60** | 54 / 60 |
+| Speed on the Raspberry Pi 4 (1 second budget) | built for small devices; 0.07 s on the laptop | 0.42 s on the laptop, not measured on the Pi – likely several times slower |
+| Works on the DSP chunks as they are | **yes** | needs ~1 s of added silence per command, otherwise invents words |
+| Memory next to DSP and NLU | **261 MB** | 327 MB |
+| Everyday talk written faithfully | no – sometimes becomes command words | **yes** |
+| Free text after "log event" | weak ("have pet take") | better ("heptic") |
+
+The two are statistically tied on accuracy; speed on the Pi, the fit with
+the DSP stream and simplicity decide. Whisper's code stays in the
+repository as a fallback (`--config faster-whisper-tiny.en-beam1+shortprompt`;
+add ~1 s of silence after each utterance if it is ever used).
+
 ## Phase B – new recordings, first measurements (2026-10-16)
 
 > **Development set numbers** (60 commands, one speaker, 4-second clips).

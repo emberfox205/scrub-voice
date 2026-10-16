@@ -36,17 +36,16 @@ errors in plain terms, and prefer simple, readable code over clever code.
   process per config, repeated timing); three determinism bugs fixed; full
   engine comparison. All findings and numbers: `docs/ASR_FINDINGS.md` (team
   meeting notes at the top).
-- **Decision (team meeting):** continue with exactly two setups. Phase B
-  (new dev set, 2026-10-16) fixed their exact configs:
-  1. **`vosk-grammar+freeform-log`** (first choice): 59/60 commands fully
-     right, recall 0.986 / precision 0.986, 0.07 s per clip, 261 MB.
-     Weakness: forces everyday speech into command words ("a bit late" ->
-     "blade").
-  2. **`faster-whisper-tiny.en-beam1+shortprompt`** + correction list: 54/60,
-     recall 0.957 / precision 0.992, 0.42 s per clip, 327 MB. Writes everyday
-     speech faithfully. The long prompt (`+prompt`) is dropped: same
-     accuracy, twice as slow, one repetition loop.
-  The two are statistically tied on accuracy (dev set, one speaker).
+- **FINAL DECISION (2026-10-16): Vosk, config `vosk-grammar+freeform-log`
+  (`bench_configs.PRODUCTION_CONFIG`). Model testing is closed** – Josias
+  wants to finish; don't propose more engine comparisons. 59/60 dev
+  commands fully right, recall 0.986 / precision 0.986, 0.07 s per clip,
+  261 MB. Weakness: forces everyday speech into command words ("a bit
+  late" -> "blade"). Overview of all engines and the reasons:
+  `docs/ASR_FINDINGS.md` "Decision". Whisper code stays as a fallback only.
+- **Done (2026-10-16):** streaming entry point `stream.py` + service
+  `scripts/run_asr.py` (ZeroMQ in from DSP, out to NLU), interface guide for
+  the team: `docs/ASR_GUIDE.md`.
 - **Dropped:** Moonshine (does not fit our streaming front end, no confidence
   score), Whisper base.en, beam 5, hot words (repetition loops, "zoom in" on
   pure noise).
@@ -60,12 +59,14 @@ errors in plain terms, and prefer simple, readable code over clever code.
     repo** (recordings of people are never committed).
   - **Phase B done (2026-10-16):** dev (60) and non-command (19) sets
     recorded (Josias), grammar and correction list tuned, both setups
-    measured. Details: `docs/ASR_FINDINGS.md` ("Phase B"). Left over:
-    re-record 3 cut-off `log_event` clips (`--duration 7 --redo ...`);
-    held-out set, ideally by other speakers.
-- **The input changed.** DSP sends a continuous stream of 0.5 s chunks, not
-  finished segments: ASR must detect speech start and end itself →
-  **Phase C**.
+    measured. Details: `docs/ASR_FINDINGS.md` ("Phase B"). Optional, only
+    if there is time: re-record 3 cut-off `log_event` clips
+    (`--duration 7 --redo ...`); held-out set by other speakers.
+- **The input:** DSP sends 0.5 s chunks, cleaned and beamformed, **only
+  while its voice activity detector hears speech** (`src/dsp/source/`:
+  per-chunk Silero gate, beamformer output = float32 mono 16 kHz, 8000
+  samples). So ASR runs no speech detection of its own: a run of speech
+  chunks = one utterance (`stream.py`).
 - **History:** the original standalone project (old recordings, earlier run
   outputs, retired Moonshine code) stays in Josias's local folder
   `Desktop\projects\asr-module`; it is not needed for further work.
@@ -86,20 +87,20 @@ pip install -r src/asr/requirements.txt
   `requirements.txt` (NLU, DSP) is shared – don't edit it without asking.
 
 ## Goal
-Consume the stream of 0.5 s chunks of cleaned audio, detect each spoken
-utterance (start and end), transcribe it, and emit **one JSON per utterance**
-to the NLU stage. Fully offline, fast enough on a Raspberry Pi 4.
+Take the DSP's speech chunks, turn each utterance into text and emit **one
+JSON per utterance** to the NLU stage – faithfully, without further
+processing; NLU does the rest. Fully offline, fast enough on a Raspberry
+Pi 4.
 
 ## Constraints
 - **Offline at runtime.** Models live in `src/asr/models/`. No network calls at
   inference time.
 - **Target hardware:** Raspberry Pi 4 (`docs/RPI4_DEPLOYMENT_GUIDE.md`). Laptop
   numbers are only for comparing setups.
-- **Input:** 0.5 s chunks of cleaned, beamformed audio. Engines need 16 kHz
-  mono float32 (`audio.py` resamples and downmixes). Chunk format,
-  timestamps and transport still to confirm with DSP (open questions below;
-  `src/dsp/source/` contains their audio streaming code – read it).
-- **ASR owns voice activity detection and end-of-utterance detection.**
+- **Input:** 0.5 s speech chunks, float32 mono 16 kHz, with the capture
+  time of the first sample; message format in `docs/ASR_GUIDE.md`.
+- **End of utterance:** DSP "end" message (preferred), a gap in capture
+  times, or 0.8 s without chunks (timeout); 15 s maximum.
 - **Latency target (tentative):** under 1 s from end of speech to JSON for a
   ~2 s command, on the Pi. The budget includes waiting for the chunk that
   contains the end of speech (up to 0.5 s), the silence needed to decide the
@@ -133,7 +134,8 @@ One JSON object per detected utterance:
   in the NLU schema).
 - `normalized`: `normalize(text, corrections=True, drop_politeness=True)`.
 - `confidence`: 0–1 for the whole transcript. faster-whisper →
-  `exp(avg_logprob)`, null for empty output; Vosk → mean word confidence.
+  `exp(avg_logprob)`, null for empty output; Vosk → mean word confidence
+  without "[unk]", null if only "[unk]" was heard.
 - `language`: fixed "en".
 - `words`: word timestamps in seconds relative to `segment_start`, with
   per-word confidence.
@@ -226,31 +228,22 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
 - Short prompt (`WHISPER_PROMPT_SHORT`): 0.42 s per clip, same as no prompt;
   the long one took 0.78 s. No hot words.
 
-## Finding speech in the 0.5 s chunk stream (Phase C design notes)
-- **Shared segmenter for both engines** (same boundaries → fair comparison):
-  Silero VAD, bundled with faster-whisper (`faster_whisper.vad.SileroVADModel`,
-  `faster_whisper/assets/silero_vad.onnx`, no extra download or dependency).
-  Its `__call__(x, state, context, sr)` carries `state`/`context` between
-  calls, so it runs window by window over our chunks (512-sample windows =
-  32 ms at 16 kHz – check `get_speech_timestamps` in the installed source).
-  Also look at `src/dsp/` – the DSP team already wraps a VAD there; reuse or
-  align with it rather than duplicating.
-- Parameters to tune on the dev set: speech threshold, silence needed to end
-  an utterance (start with 300–500 ms), pre-roll (start at 400 ms - 200 ms
-  cut off "hand"), maximum utterance length (`log_event` ~10 s).
-- **Before Whisper: append ~1 s of zeros** to every utterance (Phase B
-  finding above). Vosk does not need it.
-- **Vosk variant:** its own endpointing (`AcceptWaveform` per chunk).
-- Cases: utterance spanning several chunks, speech ending at a chunk
-  boundary, two commands with a short pause, noise-only chunks, long
-  `log_event`.
-- **Test material:** `data/asr/sample_01–05.wav` (in the repo, 16 kHz mono,
-  30–55 s each) are long passages read aloud (sample_03 is a story), not
-  commands – useful as continuous non-command speech between commands and
-  for long-utterance tests. `scripts/simulate_stream.py` (to write) joins recorded clips
-  with pauses and noise, cuts the result into 0.5 s chunks and keeps the true
-  start/end times. Metrics: utterances found / missed / split / merged, start
-  and end error, end-of-speech → JSON latency.
+## Utterances from the DSP stream (implemented, `stream.py`)
+- `UtteranceStream(engine)`: `feed(chunk, capture_time)` collects speech
+  chunks; the utterance is transcribed in one go when it ends (DSP "end",
+  capture-time gap > 0.25 s, or 15 s). Same as the benchmark → measured
+  accuracy holds. `segment_start` = first chunk's capture time + first
+  word's start; word times relative to it.
+- `scripts/run_asr.py`: ZeroMQ service (binds PULL `SCRUB_AUDIO_ADDR`,
+  connects PUSH `SCRUB_ASR_ADDR`, `ipc:///tmp/...` defaults like
+  `src/orchestrator/`) or `--wav` simulation (Silero from faster-whisper
+  marks speech chunks, like the DSP).
+- Measured (laptop, fake DSP over ZeroMQ): JSON 0.03 s after a DSP "end"
+  message, 0.94 s when relying on the timeout → DSP should send "end".
+- The first "log event" of a session takes ~0.6 s extra (one-time setup in
+  Vosk's free-speech model; warming up with silence/noise did not help).
+- Not done (ideas, only if needed): emergency fast path with Vosk partial
+  results; Vosk's own endpointing inside long speech runs.
 
 ## Module layout
 ```
@@ -262,14 +255,14 @@ src/asr/
   normalize.py         # one normalize() for scoring + the JSON `normalized` field; CORRECTIONS
   vocab.py             # terms per intent (schema), grammar words, prompt sentences, term metrics, leakage check
   metrics.py           # corpus WER, cluster bootstrap CI, paired differences
-  bench_configs.py     # 6 configs: whisper tiny beam1 (none / prompt / short prompt),
-                       #   vosk free-form / grammar / grammar + free-form for log_event
-                       #   (chosen: vosk-grammar+freeform-log, ...+shortprompt)
+  bench_configs.py     # 6 configs + PRODUCTION_CONFIG = "vosk-grammar+freeform-log"
+  stream.py            # UtteranceStream: DSP speech chunks in, one ASRResult per utterance out
   engines/             # base.py, faster_whisper_engine.py, vosk_engine.py
   test/                # unit tests (python -m unittest discover -s src/asr/test -v)
   scripts/
     record_testset.py  # record a phrase list -> data/asr/<list>/ + manifest (--redo "<phrase>")
-    transcribe.py      # file(s) -> one JSON line each on stdout (--config <name>, default vosk-grammar)
+    run_asr.py         # the ASR service: ZeroMQ DSP -> ASR -> NLU, or --wav simulation
+    transcribe.py      # file(s) -> one JSON line each on stdout (default: PRODUCTION_CONFIG)
     benchmark.py       # configs x clip sets, one process per config -> src/asr/results/
     bench_worker.py    # used by benchmark.py
     compare_configs.py # paired bootstrap: which differences are real
@@ -282,15 +275,16 @@ data/asr/
   sample_01-05.wav     # team samples: long read-aloud passages, not commands
   commands_dev/ ...    # recordings + manifests (gitignored)
 docs/ASR_FINDINGS.md   # findings log for the project report
+docs/ASR_GUIDE.md      # interface for DSP and NLU teammates, how to run
 ```
-To be written: `segmenter.py`, `stream.py` (chunks in → JSON out),
-`scripts/simulate_stream.py`.
 
 ## Commands you'll use (from the repository root)
 ```powershell
 .venv\Scripts\activate
 python -m unittest discover -s src/asr/test -v                                # unit tests
-python src/asr/scripts/transcribe.py data/asr/sample_01.wav --config vosk-grammar
+python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav                # stream simulation
+python src/asr/scripts/run_asr.py                                             # service (Pi; ipc:// is Linux-only)
+python src/asr/scripts/transcribe.py data/asr/sample_01.wav
 python src/asr/scripts/record_testset.py --speaker <name> --prompts-file data/asr/prompts/commands_dev.txt
 python src/asr/scripts/make_noise_clips.py
 python src/asr/scripts/benchmark.py --configs vosk-grammar --runs 1           # quick check
@@ -321,7 +315,6 @@ only after recording (Phase B); until then the benchmark stops with a message.
   The benchmark also warns when a config's text differs from its previous
   run (one unexplained case in Phase B, not reproduced in 4 reruns).
   Timing from a busy machine is misleading (Phase B: 0.79 s vs 0.42 s).
-- New for streaming: segmentation accuracy and end-of-speech → JSON latency.
 - **Dev vs held-out:** tune only on `commands_dev`; run `commands_heldout` once
   at the end. Until then, label results "dev set".
 - Grammar and prompt sentence must never contain test sentences
@@ -334,30 +327,26 @@ A. ✅ **Vocabulary from the schema** (done 2026-10-14): `vocab.py`,
 B. ✅ **Record and re-measure** (done 2026-10-16): setups fixed, grammar
    and correction list tuned, cutting rule for Whisper found. Left over:
    re-record 3 cut-off clips; held-out set by other speakers.
-C. **Streaming:** `segmenter.py` (Silero VAD, window by window) +
-   `scripts/simulate_stream.py`; Vosk native endpointing as a variant;
-   measure segmentation and latency.
-D. **Entry point:** `stream.py` – chunks (+ capture timestamps) in, one JSON per
-   utterance out; transport (ZeroMQ?) once DSP confirms.
-E. **Raspberry Pi 4:** run both setups end to end; decide.
-F. **Held-out run** → final numbers in `docs/ASR_FINDINGS.md`; pull request
-   to `main` once stable.
-G. (Optional) Noise robustness: mix OR noise at 20/10/5/0 dB SNR into the dev
-   clips.
+C. ✅ **Utterances from the stream** (done 2026-10-16): no own VAD needed –
+   DSP gates speech; `stream.py`.
+D. ✅ **Entry point** (done 2026-10-16): `scripts/run_asr.py`, ZeroMQ,
+   `docs/ASR_GUIDE.md`.
+E. **Raspberry Pi 4:** run the service with the real DSP chain; check speed
+   (`transcribed in … s` in the log) and memory next to DSP and NLU.
+F. **Pull request** to `main` once it runs on the Pi. (Held-out recordings
+   by other speakers only if there is time – testing is closed otherwise.)
 
 ## Open questions for the team
-- **DSP (Minh, Quân):** chunk format (sample rate, channels, float or int)?
-  Exactly 0.5 s, overlapping? Capture timestamp per chunk? Transport and
-  message format? Do you still run a voice activity detector (a speech flag
-  per chunk would help)? Is silence between commands sent continuously?
-  Where do `data/asr/sample_01–05.wav` come from (recorded through the array
-  and DSP chain?)
+- **DSP (Minh, Quân):** please send chunks in the format of
+  `docs/ASR_GUIDE.md` (header with `capture_time` + float32 bytes) and an
+  `"end"` message when speech stops. Which beam if several speakers are
+  detected?
 - **NLU (Khanh):** `segment_end` proposal; written forms we chose in
   `normalized` (digits, "zoom in 2 x", "xray", "5 centimeters",
   "15 degrees") OK?; verbatim free text for `log_event` OK?; handling of
   `confidence: null` and of an empty `normalized` (Vosk grammar on
-  out-of-grammar speech gives text "[unk]", normalized "", confidence
-  1.0 – the "[unk]" marker counts in the mean); who maintains the command
+  out-of-grammar speech: text "[unk]", normalized "", confidence null);
+  NLU binds the PULL socket at `SCRUB_ASR_ADDR`; who maintains the command
   list?
 - **Everyone:** is the 1 s budget for the whole chain or ASR alone? Memory
   left on the Pi next to DSP and NLU? Fallback: ASR on the workstation?

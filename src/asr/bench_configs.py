@@ -60,3 +60,7 @@ BIASED: dict[str, Callable[[], object]] = {
 }
 
 CONFIGS: dict[str, Callable[[], object]] = {**BASELINES, **BIASED}
+
+# The setup the pipeline runs (decision 2026-10-16, docs/ASR_FINDINGS.md):
+# best command accuracy, fastest, least memory, no audio tricks needed.
+PRODUCTION_CONFIG = "vosk-grammar+freeform-log"
