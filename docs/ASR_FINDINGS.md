@@ -1,17 +1,110 @@
 # ASR Module – Findings
 
-> **All numbers in this file are "dev set" numbers.** The same 46 clips
-> (one speaker) were used to find problems and tune settings, so results are
-> optimistic. Final numbers will come from a held-out set recorded later.
->
-> **All numbers so far were measured on the OLD image-viewer commands**
-> (pan, window, axial, …). The command set has since changed (see below).
->
-> This log was started in a standalone project before the module moved into
-> this repository. References to `archive/`, `results/archive/…`, the first
-> test set (`data/clean/`, `data/manifest.csv`) and `scripts/diagnose.py`
-> point to that local project folder (owner: Josias) and are not part of the
-> repo. The module itself lives in `src/asr/`.
+> **How to read this file:** start with the one-page overview right below.
+> Everything after it is the detailed log, newest first. All numbers are
+> from recordings that were also used for tuning (one speaker), so they are
+> optimistic. Sections from before 2026-10-14 used the old image-viewer
+> commands (pan, window, axial, …) and a local project folder (owner:
+> Josias) whose paths (`archive/`, `data/clean/`, …) are not in this repo.
+
+## Speech recognition in one page (team meeting, 2026-10-17)
+
+### What it does
+Speech recognition (ASR) turns what the surgeon says into text. That is
+all it does – understanding the text is the next stage's job.
+
+```
+microphones ─▶ audio front end (DSP) ─▶ SPEECH RECOGNITION ─▶ language understanding (NLU) ─▶ orchestrator ─▶ robot / monitor
+               cleans the audio,         audio → text          text → command + values
+               sends only speech
+```
+
+### What goes in, what comes out
+**In:** the cleaned audio, in half-second pieces, only while someone is
+speaking. When the speaker stops, the audio front end sends "end".
+
+**Out:** one message per spoken command. Example – the surgeon says
+*"Zoom in two x"*:
+
+```json
+{
+  "text": "zoom in two x",
+  "normalized": "zoom in 2 x",
+  "confidence": 0.875,
+  "language": "en",
+  "words": [
+    {"word": "zoom", "start": 0.0,  "end": 0.48, "confidence": 1.0},
+    {"word": "in",   "start": 0.51, "end": 0.87, "confidence": 1.0},
+    {"word": "two",  "start": 0.96, "end": 1.23, "confidence": 0.5},
+    {"word": "x",    "start": 1.23, "end": 1.74, "confidence": 1.0}
+  ],
+  "segment_start": 1792150493.32
+}
+```
+
+| field | in plain words |
+|---|---|
+| `text` | exactly what the engine heard |
+| `normalized` | the same, tidied up for the computer: numbers as digits, no "please", known mishearings fixed. **This is the field to classify.** Empty = nothing usable was heard. |
+| `confidence` | how sure the engine is, 0 to 1 (empty if it understood nothing) |
+| `words` | every word with its timing and its own confidence |
+| `segment_start` | the clock time when the speech started |
+
+### The engine: Vosk with our command list
+We compared 3 engines (Vosk, Whisper, Moonshine) in about 20 setups. The winner is
+**Vosk**, a small offline speech recognizer, which we give **the list of our
+command words** (the "grammar"). It then only has to choose between our
+words instead of the whole English language.
+
+| | result |
+|---|---|
+| Commands recognized completely right | **59 of 60** |
+| Emergency commands ("emergency stop", "halt robot", "freeze", "back off", …) | **all right** |
+| Time per command (laptop) | **0.07 seconds** |
+| Message to language understanding after the speaker stops | **0.03 seconds** (if the audio front end sends "end") |
+| Memory | about 260 MB |
+| Internet needed | no (only once, to download the model) |
+
+Runner-up: **Whisper Tiny** (the small version of OpenAI's open speech
+model) got 54 of 60 right, writes everyday talk more faithfully, but is
+6 times slower – too risky for the Raspberry Pi and our 1-second budget.
+
+### Six things we learned
+1. **Teaching the engine our words beats a bigger model.** The same Vosk
+   finds 84% of the command words on its own and 98.6% with our command
+   list. A bigger Whisper model (Base) was not reliably better – only
+   slower.
+2. **A command list has a price: everyday talk gets squeezed into
+   command words.** "We are running a bit late" came out as "blade"
+   (= hand me the scalpel). Language understanding has to be careful with
+   short, low-confidence commands.
+3. **"to" or "two"?** The engine heard "go **two** slice 45". Fix: we
+   taught it whole phrases like "go to" instead of single words.
+4. **Small words matter.** "Tilt the camera up **a little**" became "up
+   **eleven**" – an invented angle – because "little" was not in the
+   list. We added softeners like "a little", "a bit", "could you".
+5. **Some mishearings must stay uncorrected.** Whisper hears "close scan"
+   as "close skin" – but closing the skin is a real surgical step, so we
+   never "fix" it into a command. Same for "scope" (a real instrument).
+6. **Same audio, same text – always.** We found and fixed three bugs that
+   made the same recording give different text on each run (one was
+   random noise the engine adds by default). A robot must not depend on
+   luck.
+
+### What the other stages need to know
+| who | what |
+|---|---|
+| **Audio front end (DSP)** | Send the half-second pieces as 32-bit float, mono, 16 kHz, with the clock time of their first sample, and send **"end"** when speech stops – otherwise every command arrives 0.9 s later. Send one beam only. Message format: `docs/ASR_GUIDE.md`. |
+| **Language understanding (NLU)** | Classify **`normalized`**, not `text` (the engine writes "c t", "m r i", "hemo stat" in `text`; `normalized` has "ct", "mri", "hemostat"). Empty `normalized` = nothing understood → unknown. Free text after "log event" is often wrong for medical words ("hepatic" → "have pet take") – store it as it is. |
+| **Everyone** | New command word? Add it to `src/asr/vocab.py`, otherwise speech recognition cannot hear it. |
+
+### Honest limits
+- Tested with **one speaker** (Josias), on clean recordings, and the
+  settings were tuned on the same recordings → real numbers will be lower.
+- **Not yet run on the Raspberry Pi** – speed there still to be measured.
+- The very first "log event" after start-up takes about 0.6 s longer.
+
+How to connect and run it: **`docs/ASR_GUIDE.md`**.
 
 ## Decision: Vosk with the command grammar (2026-10-16)
 
