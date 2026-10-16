@@ -42,3 +42,10 @@ onnxruntime>=1.15.0
 torchaudio>=2.0.0
 onnx>=1.14.0
 onnxscript>=0.1.0
+
+# Speech Recognition (ASR) Module
+vosk>=0.3.45
+faster-whisper>=1.0.3
+sounddevice>=0.4.7
+requests>=2.31.0
+jiwer>=3.0.4
