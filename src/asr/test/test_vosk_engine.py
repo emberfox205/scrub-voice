@@ -34,6 +34,12 @@ class SpliceTest(unittest.TestCase):
         spliced = [w["word"] for w in splice_log_event(grammar, free)]
         self.assertEqual(spliced, ["record", "milestone", "biopsy"])
 
+    def test_trigger_alone_falls_back_to_freeform(self):
+        # Dev set: "Hello" came out of the grammar as "log".
+        grammar = words(("log", 0.2, 0.6))
+        free = words(("hello", 0.2, 0.6))
+        self.assertEqual(splice_log_event(grammar, free), free)
+
     def test_no_header_falls_back_to_freeform(self):
         grammar = words(("please", 0.0, 0.3), ("log", 0.3, 0.5))
         free = words(("please", 0.0, 0.3), ("log", 0.3, 0.5), ("this", 0.5, 0.8))

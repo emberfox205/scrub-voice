@@ -13,6 +13,92 @@
 > point to that local project folder (owner: Josias) and are not part of the
 > repo. The module itself lives in `src/asr/`.
 
+## Phase B – new recordings, first measurements (2026-10-16)
+
+> **Development set numbers** (60 commands, one speaker, 4-second clips).
+> The grammar, the correction list and the settings were tuned on these
+> same recordings, so the numbers are optimistic. Final numbers come from
+> the held-out set.
+
+### Recordings
+| set | clips | notes |
+|---|---|---|
+| Development commands | 60 | all 12 commands + 5 "messy" ones ("Um, hand me the scalpel please") |
+| Non-command speech | 19 | 12 everyday sentences + 7 "near misses" ("Where did I park my car") |
+| Pure noise (generated) | 15 | silence, white and pink noise |
+
+**3 clips were cut off** by the 4-second recording window (the long "log
+event" sentences, e.g. "… comment clean margins"). Every engine is blamed
+for the missing words, so they need re-recording with a longer window. The
+recording script now warns when someone is still speaking at the end, and
+`--redo "<phrase>"` records a single phrase again.
+
+### Results – the two setups we keep
+| setup | commands fully right | command words found | invented command words | false commands on everyday speech | word error rate | seconds per command (laptop) | memory |
+|---|---|---|---|---|---|---|---|
+| **Vosk + command grammar + free-speech pass for "log event"** | **59 / 60** | **98.6%** | 1.4% | 1 of 12 | 9.2% | **0.07** | **261 MB** |
+| **Whisper Tiny + short prompt sentence + correction list** | 54 / 60 | 95.7% | **0.8%** | **0 of 12** | 8.2% | 0.42 | 327 MB |
+
+- Both setups got **every emergency command right** (emergency stop,
+  halt robot, freeze, emergency clear, clear area, back off).
+- The two setups are **statistically tied** on accuracy (60 clips, one
+  speaker). Vosk is about 6 times faster.
+- Vosk's remaining weakness: it forces everyday speech into command words.
+  "We are running a bit late" → "blade" (= a tool request). Whisper writes
+  everyday speech faithfully.
+- "Near misses" ("Don't stop now") come out as command words in 71% of
+  cases with both setups – correct transcription; the language
+  understanding stage has to decide.
+
+### What we changed, and what it did
+| change | effect (development set) |
+|---|---|
+| Vosk grammar: multi-word commands ("go to", "back off", "zoom in") as fixed phrases | "go **two** slice 45" → "go to slice 45"; command words found 96.4% → 98.6% |
+| Vosk grammar: softening words ("a little", "a bit", "could you", "okay") | "tilt the camera up a little" no longer becomes "up **eleven**" (an invented angle) |
+| Vosk "log event": free-speech pass only if the grammar heard a full "log event" / "record milestone" | "Hello" no longer becomes "log" |
+| Whisper: short prompt sentence instead of the long one | same accuracy (difference is chance), half the time (0.78 → 0.42 s), no repetition loop (the long one produced "I'm going to try to make sure that…" after "Show MRI") |
+| Correction list (19 rules, built from these recordings) | Whisper: command words found 87.7% → 95.7% (optimistic – the held-out set will tell) |
+
+**Deliberately not corrected:** "close skin" (Whisper's mishearing of
+"close scan" – but closing the skin is a real surgical step), "scope"
+(for "scalpel" – a real instrument), "soon" inside a sentence (for
+"zoom"), and free-text words such as "troll car" (trocar).
+
+### Tried and rejected
+| idea | result | verdict |
+|---|---|---|
+| Vosk: drop words with low confidence | invented words mostly score 0.50–0.70, but so do correct numbers ("two" scores 0.50 because Vosk can't tell it from "to"); "blade" scored 0.83 | ❌ would delete real numbers |
+| Vosk: use the free-speech text when it shares no command word with the grammar | removes both false commands on everyday speech, but breaks "back off", "halt robot" and "zoom" | ❌ loses emergency commands |
+| Vosk grammar: extra phrases next to their single words | fixes "go to slice", but "zoom in **two** x" becomes "zoom in **to** x" (number lost) | ❌ |
+
+### Important for the next step (finding speech in the stream)
+How the audio is cut before Whisper matters a lot. Measured with Whisper
+Tiny + short prompt, cut with the Silero voice detector:
+
+| audio given to Whisper | word error rate | seconds per command |
+|---|---|---|
+| whole 4-second clip (about 2 s of room noise after the speech) | 8.2% | 0.40 |
+| cut tightly: 0.4 s before, 0.3 s after the speech | 17.9% – adds "thank you", "please", "good" | 0.68 |
+| cut tightly + 1.5 s more real audio after the speech | 8.7% | 0.49 |
+| cut tightly + 1.2 s of recorded room noise appended | 49.5% – invents words in the noise | 0.46 |
+| **cut tightly + 0.6–2 s of pure digital silence appended** | **7.7–8.7%** | **0.41–0.45** |
+
+- **For Whisper: cut tightly, then append about 1 second of digital
+  silence.** Costs no waiting time in the stream. This replaces the old
+  advice "trim tightly".
+- **0.2 s before the speech is too short:** "**hand** scalpel" lost "hand"
+  with every engine. Keep at least 0.4 s.
+- Vosk does not need this; it is slightly better on tightly cut audio.
+
+### Open
+- **One unexplained difference:** in the first full run, Whisper without a
+  prompt gave a different text on some clips than in 4 later runs (which
+  all agreed). The audio was unchanged; the computer was busy during that
+  run. The benchmark now warns whenever a config's text changes between
+  runs.
+- Whisper's speed: 0.42 seconds without a prompt *and* with the short
+  prompt (an earlier reading of 0.79 s was a busy computer).
+
 ## Phase A – vocabulary for the new command list (2026-10-14)
 
 No new accuracy numbers yet: the new commands still have to be recorded

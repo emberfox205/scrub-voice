@@ -89,5 +89,51 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(normalize("Knife please"), "knife please")
 
 
+class CorrectionsTest(unittest.TestCase):
+    def fixed(self, text: str) -> str:
+        return normalize(text, corrections=True)
+
+    def test_dev_errors_are_fixed(self):
+        cases = [
+            ("Soon.", "zoom"),
+            ("Soon out.", "zoom out"),
+            ("Soom in to X.", "zoom in 2 x"),
+            ("magnify 3 eggs", "magnify 3 x"),
+            ("Big off!", "back off"),
+            ("Hot robot.", "halt robot"),
+            ("hold rowboat", "hold robot"),
+            ("Begg 5 slices.", "back 5 slices"),
+            ("Okay, next slide please.", "okay next slice please"),
+            ("Scampel.", "scalpel"),
+            ("Pass the hemmostat.", "pass the hemostat"),
+            ("And meet the Mitzen bow.", "and meet the metzenbaum"),
+            ("Open the MRI skin.", "open the mri scan"),
+            ("close the city skin", "close the ct scan"),
+            ("show em or i", "show mri"),
+            ("This means MRI.", "dismiss mri"),
+            ("Center review.", "center view"),
+            ("cameron forward", "camera forward"),
+            ("Knock event, first incision.", "log event first incision"),
+        ]
+        for heard, expected in cases:
+            with self.subTest(heard=heard):
+                self.assertEqual(self.fixed(heard), expected)
+
+    def test_real_phrases_are_left_alone(self):
+        for text in ["Close skin", "Hand me the scope", "We will be done soon",
+                     "It's not a big of a deal", "Cameron, can you help", "This means we wait"]:
+            with self.subTest(text=text):
+                self.assertEqual(self.fixed(text), normalize(text))
+
+    def test_no_test_phrase_is_changed(self):
+        # The map must never change something that was really said.
+        prompts = Path(__file__).resolve().parents[3] / "data" / "asr" / "prompts"
+        for name in ["commands_dev.txt", "commands_heldout.txt", "non_command.txt"]:
+            for line in (prompts / name).read_text(encoding="utf-8").splitlines():
+                if line.strip() and not line.startswith("#"):
+                    with self.subTest(phrase=line):
+                        self.assertEqual(self.fixed(line), normalize(line))
+
+
 if __name__ == "__main__":
     unittest.main()

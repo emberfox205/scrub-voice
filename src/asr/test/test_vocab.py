@@ -40,12 +40,19 @@ class VocabularyTest(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertEqual(normalize(spoken), normalize(term))
 
-    def test_grammar_is_single_lowercase_words(self):
-        words = vosk_grammar_phrases()
-        self.assertTrue(all(w == w.lower() and " " not in w for w in words))
-        for needed in ["hemo", "stat", "x", "ray", "hundred", "point", "forty", "metzenbaum"]:
-            self.assertIn(needed, words)
-        self.assertNotIn("hemostat", words)  # not in the Vosk model's dictionary
+    def test_grammar_entries(self):
+        entries = vosk_grammar_phrases()
+        self.assertTrue(all(e == e.lower() for e in entries))
+        for needed in ["go to", "back off", "hemo stat", "x ray", "hundred", "point", "forty", "metzenbaum"]:
+            self.assertIn(needed, entries)
+        self.assertNotIn("hemostat", entries)  # not in the Vosk model's dictionary
+        # Words that only occur inside a phrase are not entries of their own
+        # ("to" next to "two" gave "go two slice")...
+        for phrase_only in ["to", "go", "off", "ray", "hemo"]:
+            self.assertNotIn(phrase_only, entries)
+        # ...but words needed alone stay: "back 5 slices", "ten", "x" in "2 x".
+        for needed_alone in ["back", "ten", "x", "zoom"]:
+            self.assertIn(needed_alone, entries)
 
     def test_no_test_sentence_in_any_biasing_text(self):
         # Stricter than the benchmark (dev only): held-out and non-command too.

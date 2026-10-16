@@ -37,7 +37,7 @@ SRC_DIR = ASR_DIR.parent                         # src/ (on sys.path, like the o
 REPO_ROOT = SRC_DIR.parent
 sys.path.insert(0, str(SRC_DIR))
 
-from asr.bench_configs import BASELINES, CONFIGS
+from asr.bench_configs import CONFIGS
 from asr.metrics import bootstrap_ci, clip_errors, cluster_resamples, corpus_wer
 from asr.normalize import normalize
 from asr.vocab import check_all_biasing_leakage, cluster_key, term_counts
@@ -54,7 +54,7 @@ SUMMARY_FIELDS = [
     "config", "split", "n_dev", "corpus_wer", "wer_ci_low", "wer_ci_high", "mean_clip_wer",
     "term_recall", "term_precision", "false_terms_per_clip", "unk_rate_dev",
     "n_noise", "hallucination_rate", "false_command_rate_noise", "unk_rate_noise",
-    "n_non_command", "false_command_rate_non_command", "unk_rate_non_command",
+    "n_non_command", "false_command_rate_non_command", "command_word_rate_near_miss", "unk_rate_non_command",
     "median_latency_s", "p95_latency_s", "mean_rtf", "peak_ram_mb", "load_time_s",
     "confidence_available",
 ]
@@ -113,9 +113,17 @@ def tree_rss_mb(proc: psutil.Process) -> float:
     return total / (1024 * 1024)
 
 
+def previous_texts(path: Path) -> dict[str, str]:
+    """file -> transcript from an earlier run of the same config, if any."""
+    if not path.exists():
+        return {}
+    return {c["file"]: c["hypothesis_text"] for c in json.loads(path.read_text(encoding="utf-8"))["clips"]}
+
+
 def run_config(name: str, clips: list[dict], runs: int) -> bool:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RAW_DIR / f"{name}.json"
+    before = previous_texts(out_path)
     with tempfile.TemporaryDirectory() as tmp:
         clips_path = Path(tmp) / "clips.json"
         clips_path.write_text(json.dumps(clips), encoding="utf-8")
@@ -138,6 +146,13 @@ def run_config(name: str, clips: list[dict], runs: int) -> bool:
     raw["peak_rss_mb_polled"] = polled_peak
     out_path.write_text(json.dumps(raw), encoding="utf-8")
     print(f"  {name}: done in {time.perf_counter() - started:.0f}s")
+    # Determinism across runs: runs_differ only compares runs inside one
+    # process. If the engine and its settings didn't change, any clip whose
+    # text differs from the previous run of this config is a red flag.
+    changed = [c["file"] for c in raw["clips"] if c["file"] in before and before[c["file"]] != c["hypothesis_text"]]
+    if changed:
+        print(f"  {name}: WARNING - {len(changed)} clip(s) differ from the previous run of this config "
+              f"(expected only if the engine, its settings or the audio changed): {changed[:5]}")
     return True
 
 
@@ -179,6 +194,11 @@ def summarize(name: str, raw: dict, scored: list[dict], resamples: list[np.ndarr
     dev = [c for c in scored if c["set"] == "dev"]
     noise = [c for c in scored if c["set"] == "noise_only"]
     non_cmd = [c for c in scored if c["set"] == "non_command"]
+    # Only the out_of_domain section can produce a false command; near_miss
+    # sentences really contain command words ("I'll back off on the fluids"),
+    # so writing them is faithful transcription - reported separately.
+    out_of_domain = [c for c in non_cmd if c["notes"] != "near_miss"]
+    near_miss = [c for c in non_cmd if c["notes"] == "near_miss"]
 
     errors = np.array([c["errors"] for c in dev])
     ref_words = np.array([c["ref_words"] for c in dev])
@@ -210,7 +230,8 @@ def summarize(name: str, raw: dict, scored: list[dict], resamples: list[np.ndarr
         "false_command_rate_noise": mean_or_none(c["terms_output"] > 0 for c in noise),
         "unk_rate_noise": mean_or_none(c["has_unk"] for c in noise),
         "n_non_command": len(non_cmd),
-        "false_command_rate_non_command": mean_or_none(c["terms_output"] > 0 for c in non_cmd),
+        "false_command_rate_non_command": mean_or_none(c["terms_output"] > 0 for c in out_of_domain),
+        "command_word_rate_near_miss": mean_or_none(c["terms_output"] > 0 for c in near_miss),
         "unk_rate_non_command": mean_or_none(c["has_unk"] for c in non_cmd),
         "median_latency_s": float(np.median(latencies)),
         "p95_latency_s": float(np.percentile(latencies, 95)),
@@ -278,6 +299,7 @@ def print_table(summaries: list[dict]) -> None:
         ("halluc", lambda s: fmt(s["hallucination_rate"], 2)),
         ("falsecmd noise", lambda s: fmt(s["false_command_rate_noise"], 2)),
         ("falsecmd speech", lambda s: fmt(s["false_command_rate_non_command"], 2)),
+        ("near-miss cmd words", lambda s: fmt(s["command_word_rate_near_miss"], 2)),
         ("med lat", lambda s: fmt(s["median_latency_s"])),
         ("p95 lat", lambda s: fmt(s["p95_latency_s"])),
         ("RTF", lambda s: fmt(s["mean_rtf"])),
@@ -340,9 +362,10 @@ def main() -> None:
         raw = json.loads(raw_path.read_text(encoding="utf-8"))
         wanted_sets = set(set_names)
         field_rows.append(output_fields(name, raw))
-        # Baselines also get a "+corr" row: same transcripts, scored with the
-        # post-correction map (asr/normalize.py) - no extra inference.
-        variants = [(name, False)] + ([(f"{name}+corr", True)] if name in BASELINES else [])
+        # Every config also gets a "+corr" row: same transcripts, scored with
+        # the post-correction map (asr/normalize.py) - no extra inference.
+        # The +corr row is what the JSON `normalized` field gives NLU.
+        variants = [(name, False), (f"{name}+corr", True)]
         for label, corrections in variants:
             scored = [score_clip(c, corrections) for c in raw["clips"] if c["set"] in wanted_sets]
             summaries.append(summarize(label, raw, scored, resamples))

@@ -13,6 +13,10 @@ Recordings go to data/asr/<list name>/ (e.g. data/asr/commands_dev/) with a
 manifest.csv next to them; both are gitignored (recordings of people are
 never committed). Re-running with the same --speaker skips phrases you
 already recorded, so you can stop anytime (Ctrl+C) and continue later.
+
+To record a phrase again (e.g. it was cut off), overwriting its wav:
+
+    python src/asr/scripts/record_testset.py --speaker josias --prompts-file data/asr/prompts/commands_dev.txt --duration 7 --redo "Log event, first incision, note patient vitals stable"
 """
 
 import argparse
@@ -46,12 +50,13 @@ def load_prompts(prompts_file: Path) -> list[tuple[str, str]]:
     return prompts
 
 
-def load_already_recorded(manifest_path: Path, speaker: str) -> set[str]:
+def load_already_recorded(manifest_path: Path, speaker: str) -> dict[str, str]:
+    """phrase -> wav path (as in the manifest) for this speaker."""
     if not manifest_path.exists():
-        return set()
+        return {}
     with manifest_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        return {row["reference_text"] for row in reader if row["speaker"] == speaker}
+        return {row["reference_text"]: row["file"] for row in reader if row["speaker"] == speaker}
 
 
 def append_manifest_row(manifest_path: Path, row: dict) -> None:
@@ -73,6 +78,14 @@ def record_clip(duration: float) -> np.ndarray:
     return audio[:, 0]
 
 
+def speech_at_the_end(audio: np.ndarray) -> bool:
+    """True if the last 0.2 s is still loud (at least 10% of the peak level
+    in some 10 ms frame): the speaker was probably cut off."""
+    tail = audio[-int(0.2 * SAMPLE_RATE):]
+    frames = tail[: len(tail) // 160 * 160].reshape(-1, 160)
+    return float(np.sqrt((frames ** 2).mean(axis=1)).max()) > 0.1 * float(np.abs(audio).max())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Record an ASR test set, one phrase at a time")
     parser.add_argument("--speaker", required=True, help="Your name or an id, e.g. josias")
@@ -80,6 +93,8 @@ def main() -> None:
     parser.add_argument("--outdir", type=Path, default=None, help="Default: data/asr/<prompts file name>/")
     parser.add_argument("--manifest", type=Path, default=None, help="Default: <outdir>/manifest.csv")
     parser.add_argument("--duration", type=float, default=4.0, help="Seconds to record per clip")
+    parser.add_argument("--redo", action="append", default=[], metavar="PHRASE",
+                        help="Record an already recorded phrase again, overwriting its wav (repeat for several)")
     args = parser.parse_args()
 
     prompts = load_prompts(args.prompts_file)
@@ -88,7 +103,13 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     done = load_already_recorded(manifest, args.speaker)
-    remaining = [(text, notes) for text, notes in prompts if text not in done]
+    if args.redo:
+        unknown = [t for t in args.redo if t not in done]
+        if unknown:
+            sys.exit(f"Not recorded yet for speaker '{args.speaker}', can't redo: {unknown}")
+        remaining = [(text, notes) for text, notes in prompts if text in args.redo]
+    else:
+        remaining = [(text, notes) for text, notes in prompts if text not in done]
     if not remaining:
         print(f"Nothing left to record for speaker '{args.speaker}' - all {len(prompts)} phrases are done.")
         return
@@ -118,7 +139,19 @@ def main() -> None:
                 print(f"  Clipping (peak={peak:.3f}) - too loud. Redo? [Y/n]: ", end="")
                 if input().strip().lower() != "n":
                     continue
+            elif speech_at_the_end(audio):
+                print(f"  Still speaking at the end of the {args.duration:g} s window - cut off? "
+                      "(use a longer --duration) Redo? [Y/n]: ", end="")
+                if input().strip().lower() != "n":
+                    continue
             break
+
+        if text in args.redo:
+            # Overwrite the existing clip; its manifest row stays as it is.
+            sf.write(REPO_ROOT / done[text], audio, SAMPLE_RATE, subtype="PCM_16")
+            recorded_this_session += 1
+            print(f"  Re-recorded {Path(done[text]).name} (peak={peak:.2f})\n")
+            continue
 
         existing = list(outdir.glob(f"{args.speaker}_*.wav"))
         clip_path = outdir / f"{args.speaker}_{len(existing) + 1:03d}.wav"

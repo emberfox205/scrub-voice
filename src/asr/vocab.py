@@ -65,6 +65,10 @@ SPOKEN_FORMS = {"CT": "c t", "MRI": "m r i", "X-ray": "x ray", "hemostat": "hemo
 # twenty", "one point five").
 GRAMMAR_FUNCTION_WORDS = ["the", "a", "me", "and", "by", "x", "times", "please"]
 GRAMMAR_NUMBER_WORDS = list(NUMBER_WORDS) + list(TENS) + ["hundred", "point"]
+# Softeners people add to commands. Without them the grammar forced
+# "tilt the camera up a little" into "... up eleven" - an invented angle
+# (dev set, Phase B).
+GRAMMAR_MODIFIER_WORDS = ["little", "bit", "okay", "could", "you"]
 
 # One natural sentence with the key terms, for Whisper's initial_prompt (it
 # nudges spelling and word choice toward these terms). Written from the
@@ -93,18 +97,23 @@ _TERMS = sorted({tuple(normalize(t).split()) for t in COMMAND_VOCAB}, key=len, r
 
 
 def vosk_grammar_phrases() -> list[str]:
-    """Allowed words for Vosk's restricted grammar, built only from this file
-    (never from test-set sentences). "[unk]" is added by the engine.
+    """Allowed phrases for Vosk's restricted grammar, built only from this
+    file (never from test-set sentences). "[unk]" is added by the engine.
 
-    A Vosk grammar accepts any sequence of its phrases (checked: the word
-    list alone decodes "zoom in two x please"), so single words are enough
-    and no command sentence has to be written into the grammar."""
-    words: set[str] = set()
+    A Vosk grammar accepts any sequence of its entries, but the entries
+    also teach it which words follow each other. So multi-word terms
+    ("go to", "back off", "x ray") are entries of their own, and a word that
+    only occurs inside them is not added alone: with "to" as a single word
+    next to "two", the grammar heard "go two slice 45" (dev set, Phase B)."""
+    phrases: set[str] = set()
+    single: set[str] = set(GRAMMAR_FUNCTION_WORDS + GRAMMAR_NUMBER_WORDS + GRAMMAR_MODIFIER_WORDS)
     for term in COMMAND_VOCAB:
-        words.update(SPOKEN_FORMS.get(term, term.lower()).split())
-    words.update(GRAMMAR_FUNCTION_WORDS)
-    words.update(GRAMMAR_NUMBER_WORDS)
-    return sorted(words)
+        spoken = SPOKEN_FORMS.get(term, term.lower())
+        if " " in spoken:
+            phrases.add(spoken)
+        else:
+            single.add(spoken)
+    return sorted(phrases) + sorted(single)
 
 
 def check_leakage(texts: list[str], references: list[str], what: str) -> None:
@@ -123,6 +132,8 @@ def check_leakage(texts: list[str], references: list[str], what: str) -> None:
 
 
 def check_all_biasing_leakage(references: list[str]) -> None:
+    # The grammar is checked entry by entry: joining its entries would glue
+    # neighbours into phrases nobody wrote.
     check_leakage(vosk_grammar_phrases(), references, "Vosk grammar")
     check_leakage([WHISPER_PROMPT], references, "Whisper prompt")
     check_leakage([WHISPER_PROMPT_SHORT], references, "short Whisper prompt")

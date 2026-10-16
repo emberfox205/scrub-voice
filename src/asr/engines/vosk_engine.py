@@ -108,14 +108,18 @@ def splice_log_event(grammar_words: list[dict], free_words: list[dict]) -> list[
     """Command header from the grammar ("log event", "record milestone"),
     free text after it from the free-form recognizer. A free-form word is
     kept if its middle lies after the end of the header, so a word both
-    recognizers heard (e.g. "event") is not doubled."""
+    recognizers heard (e.g. "event") is not doubled.
+
+    Without a full header (trigger + "event"/"milestone") the grammar was
+    probably forcing other speech into "log" ("Hello" -> "log" on the dev
+    set), so the free-form result is used as it is."""
     header: list[dict] = []
     for w in grammar_words:
         if w["word"] in LOG_HEADER_WORDS:
             header.append(w)
         elif header or w["word"] != "[unk]":
             break  # the header is over (leading "[unk]", e.g. "um", is skipped)
-    if not header:
+    if len(header) < 2 or not LOG_TRIGGERS & {w["word"] for w in header}:
         return free_words
     header_end = header[-1]["end"]
     return header + [w for w in free_words if (w["start"] + w["end"]) / 2 > header_end]

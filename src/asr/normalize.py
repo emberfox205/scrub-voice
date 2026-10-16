@@ -46,12 +46,43 @@ NUMBER_UNIT = re.compile(r"\b(\d+(?:\.\d+)?)(x|cm)\b")
 FILLERS = {"uh", "uhh", "um", "umm", "uhm", "er", "erm", "hmm", "hm", "mm"}
 POLITENESS = {"please", "thanks"}
 
-# Post-correction map: (regex on normalized text, replacement). Empty on
-# purpose: the old list was built for the old image-viewer commands. Rebuild
-# it from errors on the new dev set only (src/asr/CLAUDE.md, Phase B), and
-# only with phrases that would almost never be meant literally in an
-# operating room, so the map can't create false commands.
-CORRECTIONS: list[tuple[str, str]] = []
+# Post-correction map: (regex on normalized text, replacement). Built from
+# errors on the dev set only (Phase B, 2026-10-16; which engine made each
+# error: docs/ASR_FINDINGS.md). Only mishearings of command words, and only
+# phrases that would almost never be meant literally in an operating room,
+# so the map can't create false commands. Left out on purpose:
+# "close skin" (a real surgical phrase - Whisper's "close scan"), "scope"
+# (a real instrument - Whisper's "scalpel"), "soon" inside a sentence, and
+# free-text words of log_event ("troll car" for trocar).
+# A whole utterance is matched with ^...$.
+CORRECTIONS: list[tuple[str, str]] = [
+    # zoom_display
+    (r"^soon$", "zoom"),
+    (r"\b(soon|soom) (in|out)\b", r"zoom \2"),
+    (r"\bzoom (in|out) to x\b", r"zoom \1 2 x"),
+    (r"\b(\d+(?:\.\d+)?) eggs\b", r"\1 x"),
+    # emergency
+    (r"\bbig off\b", "back off"),
+    (r"\b(hot|haunt) robot\b", "halt robot"),
+    (r"\browboat\b", "robot"),
+    # navigate_slice
+    (r"\b(begg|big) (\d+) slices?\b", r"back \2 slices"),
+    (r"\b(next|previous) slide\b", r"\1 slice"),
+    # tools
+    (r"\b(scampel|scamper)\b", "scalpel"),
+    (r"\b(hemmostat|him most it)\b", "hemostat"),
+    (r"\bmitzen bow\b", "metzenbaum"),
+    # scans
+    (r"\b(ct|mri|xray) skin\b", r"\1 scan"),
+    (r"\bcity (scan|skin)\b", "ct scan"),
+    (r"\bem or i\b", "mri"),
+    (r"^this means (ct|mri|xray|scan)$", r"dismiss \1"),
+    # camera
+    (r"\bcenter (review|of you)\b", "center view"),
+    (r"\bcameron (left|right|up|down|forward|backward|home)\b", r"camera \1"),
+    # log_event
+    (r"\b(lock|knock|nor) event\b", "log event"),
+]
 
 
 def strip_punctuation(text: str) -> str:
