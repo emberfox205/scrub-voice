@@ -52,15 +52,15 @@ def bf():
 # ============================================================
 def test_wrong_channels_raises(bf):
     with pytest.raises(ValueError):
-        bf.beamform(np.zeros((4, 8000), dtype=np.float32), target_angle_deg=0.0)
+        bf.beamform(np.zeros((4, 8000), dtype=np.float32), target_angles=0.0)
 
 def test_1d_input_raises(bf):
     with pytest.raises(ValueError):
-        bf.beamform(np.zeros(8000, dtype=np.float32), target_angle_deg=0.0)
+        bf.beamform(np.zeros(8000, dtype=np.float32), target_angles=0.0)
 
 def test_short_chunk_returns_zeros(bf):
     """Chunk shorter than 512 frame_size should return zero vector without crash."""
-    out = bf.beamform(np.zeros((6, 200), dtype=np.float32), target_angle_deg=90.0)
+    out = bf.beamform(np.zeros((6, 200), dtype=np.float32), target_angles=90.0)
     assert out.shape == (200,)
     assert np.all(out == 0.0)
 
@@ -70,7 +70,7 @@ def test_short_chunk_returns_zeros(bf):
 # ============================================================
 def test_output_shape_and_dtype(bf):
     chunk = np.random.randn(6, 8000).astype(np.float32)
-    out = bf.beamform(chunk, target_angle_deg=180.0)
+    out = bf.beamform(chunk, target_angles=180.0)
     assert isinstance(out, np.ndarray)
     assert out.shape == (8000,)
     assert out.dtype == np.float32
@@ -79,7 +79,7 @@ def test_output_shape_and_dtype(bf):
 
 def test_silence_input_gives_clean_silence(bf):
     silence = np.zeros((6, 8000), dtype=np.float32)
-    out = bf.beamform(silence, target_angle_deg=45.0)
+    out = bf.beamform(silence, target_angles=45.0)
     assert np.all(out == 0.0)
     assert not np.isnan(out).any()
 
@@ -98,8 +98,8 @@ def test_on_axis_vs_off_axis_attenuation(bf, target_angle):
 
     opposite_angle = (target_angle + 180.0) % 360.0
 
-    on_axis_audio = bf.beamform(audio, target_angle_deg=target_angle)   
-    off_axis_audio = bf.beamform(audio, target_angle_deg=opposite_angle)
+    on_axis_audio = bf.beamform(audio, target_angles=target_angle)   
+    off_axis_audio = bf.beamform(audio, target_angles=opposite_angle)
 
     # Compute RMS energy excluding edge frames
     on_axis_energy = np.mean(on_axis_audio[512:-512] ** 2)
@@ -118,7 +118,7 @@ def test_on_axis_vs_off_axis_attenuation(bf, target_angle):
 def test_on_axis_correlation(bf):
     """Reconstructed on-axis audio must preserve waveform shape of the source."""
     audio, clean_ref = make_simulated_source(bf, angle_deg=120.0)
-    enhanced = bf.beamform(audio, target_angle_deg=120.0)
+    enhanced = bf.beamform(audio, target_angles=120.0)
 
     # Normalize and compute Pearson correlation in steady-state region
     seg_ref = clean_ref[1000:7000]
@@ -130,21 +130,40 @@ def test_on_axis_correlation(bf):
 # ============================================================
 # 5. Multi-Source Interface (beamform_multi)
 # ============================================================
-def test_beamform_multi_empty(bf):
+def test_beamform_empty_list(bf):
+    """Passing an empty list of angles returns an empty list."""
     chunk = np.random.randn(6, 8000).astype(np.float32)
-    res = bf.beamform_multi(chunk, target_angles_deg=[])
+    res = bf.beamform(chunk, target_angles=[])
     assert res == []
 
-def test_beamform_multi_multiple_targets(bf):
+def test_beamform_multiple_targets(bf):
+    """Passing a list of 2 angles returns a list of 2 separated audio streams."""
     chunk = np.random.randn(6, 8000).astype(np.float32)
     angles = [60.0, 180.0]
-    res = bf.beamform_multi(chunk, target_angles_deg=angles)
+    res = bf.beamform(chunk, target_angles=angles)
 
+    assert isinstance(res, list)
     assert len(res) == 2
     assert res[0].shape == (8000,)
     assert res[1].shape == (8000,)
     assert res[0].dtype == np.float32
     assert res[1].dtype == np.float32
+
+def test_spatial_masking_cross_talk_reduction(bf):
+    """
+    Simulate two simultaneous speakers at 60° and 180°.
+    Verify that spatial masking suppresses speaker 2 from stream 1.
+    """
+    audio_spk1, _ = make_simulated_source(bf, angle_deg=60.0)
+    audio_spk2, _ = make_simulated_source(bf, angle_deg=180.0)
+    mixed = audio_spk1 + audio_spk2
+
+    streams = bf.beamform(mixed, target_angles=[60.0, 180.0], apply_spatial_mask=True)
+    assert len(streams) == 2
+    assert streams[0].shape == (8000,)
+    assert streams[1].shape == (8000,)
+    assert not np.isnan(streams[0]).any()
+    assert not np.isnan(streams[1]).any()  
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

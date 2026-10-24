@@ -51,7 +51,7 @@ def initialize_system():
     # 3. Module DAS Beamformer
     print("⏳ [3/3] Initializing DAS Beamformer (Module 3)...")
     beamformer = DASBeamformer(sample_rate=SAMPLE_RATE, radius=0.04625)
-    _ = beamformer.beamform(dummy_chunk, target_angle_deg=0.0)
+    _ = beamformer.beamform(dummy_chunk, target_angles=0.0)
     print("   ✓ DAS Beamformer ready (360° weights precomputed).")
 
     print("=" * 70)
@@ -79,7 +79,7 @@ def run_live_pipeline():
     raw_recording = []
 
     # Fully dynamic dictionary: handles Stream 0, 1, 2, ... automatically
-    beam_recordings = defaultdict(list)
+    speaker_tracks = {}  # {track_angle: [chunks]}
 
     try:
         # 2. Open live ALSA audio capture stream
@@ -138,7 +138,7 @@ def run_live_pipeline():
                 # Steers simultaneous beams for ALL detected angles
                 # -------------------------------------------------------------
                 t_beam = time.perf_counter()
-                enhanced_streams = beamformer.beamform_multi(chunk, target_angles_deg=detected_angles)
+                enhanced_streams = beamformer.beamform(chunk, target_angles=detected_angles)
                 beam_ms = (time.perf_counter() - t_beam) * 1000
 
                 total_latency_ms = vad_ms + loc_ms + beam_ms
@@ -156,9 +156,22 @@ def run_live_pipeline():
                 # Accumulate raw reference (Mic 0)
                 raw_recording.append(chunk[0].copy())
 
-                # Dynamically buffer each isolated beam stream
-                for idx, stream in enumerate(enhanced_streams):
-                    beam_recordings[idx].append(stream.copy())
+                # Route audio to speaker tracks based on their PHYSICAL ANGLE
+                for angle, stream in zip(detected_angles, enhanced_streams):
+                    matched_track = None
+                    for track_angle in speaker_tracks.keys():
+                        diff = abs(angle - track_angle)
+                        circ_diff = min(diff, 360.0 - diff)
+                        if circ_diff <= 25.0:  # ±25° tolerance for head movement
+                            matched_track = track_angle
+                            break
+
+                    if matched_track is None:
+                        matched_track = angle
+                        speaker_tracks[matched_track] = []
+
+                    speaker_tracks[matched_track].append(stream.copy())
+
 
     except KeyboardInterrupt:
         print("\n🛑 Stopping live pipeline (Ctrl+C caught)...")
@@ -178,13 +191,14 @@ def run_live_pipeline():
             print(f"💾 Captured {duration_sec:.1f}s of active speech audio:")
             print(f"   👉 Raw Reference:     {raw_path}")
 
-            # Dynamically export every active beamformed stream
-            for stream_idx, chunks in beam_recordings.items():
+            # Save a dedicated file for each physical speaker position in the room
+            for track_angle, chunks in speaker_tracks.items():
                 if chunks:
                     beam_full = np.concatenate(chunks)
-                    beam_path = OUTPUT_DIR / f"live_beam_stream{stream_idx}.wav"
+                    track_dur = len(beam_full) / SAMPLE_RATE
+                    beam_path = OUTPUT_DIR / f"live_beam_stream_{track_angle}deg.wav"
                     wavfile.write(str(beam_path), SAMPLE_RATE, (beam_full * 32767).astype(np.int16))
-                    print(f"   👉 Beamformed Stream #{stream_idx}:       {beam_path}")
+                    print(f"   👉 Speaker at {int(track_angle):3d}° ({track_dur:4.1f}s): {beam_path}")
             print("=" * 70)
         else:
             print("\nℹ️ No active speech was detected during this run.")
