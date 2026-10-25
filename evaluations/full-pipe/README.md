@@ -109,3 +109,22 @@ To understand performance scaling, the exact same test vectors and models were p
 | **Malformed Intent Payload** | Draft 2020-12 strict JSON schema validation. | Malformed commands rejected before reaching robotic manipulators. |
 | **Critical Emergency (`STOP`, `FREEZE`)** | Dedicated ZeroMQ priority channel (`scrub_nlu_priority.ipc`). | Emergency stops preempt navigation requests with $< 0.2\text{ ms}$ queuing delay. |
 | **Worker Process Crash (e.g. OOM or Segfault)** | Supervisor watchdog polls PIDs every 200 ms. | Dead service auto-restarted in $< 420\text{ ms}$ without dropping the web monitor. |
+
+---
+
+## 6. Live Trial Observations & Edge Enhancements
+
+Recent empirical trials with physical voice recordings highlighted four key edge findings:
+
+1. **Denoiser Coloration ("Vacuum Tube / Pops"):**
+   * While static noise is attenuated, DeepFilterNet introduces flanging/spectral gating ("hollow tube") and volume fading on reverberant speech.
+   * *Mitigation:* Apply an attenuation clamp (e.g. $-12\text{ dB}$ floor) and blend $20\%$ raw audio with $80\%$ denoised audio to preserve vocal naturalness.
+2. **ASR Grammar Flexibility:**
+   * Constrained FST decoding currently feels restrictive because surgeons naturally use diverse synonyms (*"bring up"*, *"scroll"*, *"freeze"*, *"closer"*).
+   * Expanding the grammar dictionary with 30–50 synonyms incurs negligible latency ($< 10\text{ ms}$ on Cortex-A72) while giving doctors complete conversational freedom.
+3. **Explicit "END" Trailing Keyword:**
+   * Silence detection in operating rooms is challenged by background ventilators and suction.
+   * Supporting an optional explicit delimiter (e.g. *"zoom in two times end"*) allows the ASR engine to flush immediately upon word match, eliminating all silence timeout delays.
+4. **Clinical Monitor Action Catalog:**
+   * The intraoperative monitor supports complete hands-free navigation across DICOM scans (`open_scan`, `close_scan`, `zoom_display`, `navigate_slice`), EMR milestone audit logging (`log_event`), robotic tool selection (`pick_tool`, `park_arm`), and safety interlocks (`halt_emergency`, `clear_emergency`). Detailed slot definitions are documented in [`evaluations/orchestrator/README.md`](../orchestrator/README.md).
+

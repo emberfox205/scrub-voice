@@ -45,7 +45,28 @@ $$\text{RTF} = \frac{\text{Processing Time}}{\text{Audio Duration}}$$
 
 ---
 
-## 3. Teammate Watch-Outs & Recommendations
+## 3. Empirical Acoustic Findings & Real-World Caveats
+
+### ⚠️ Acoustic Quality: Neural Denoiser "Vacuum Tube / Pops" Artifact
+* **Observed Behavior in Live Trials:** DeepFilterNet output can sound "underwhelming" on certain recordings—static noise is only moderately attenuated, while the speaker's voice exhibits a "vacuum tube" coloration (flanging/comb filtering), volume fading in and out, and subtle popping artifacts.
+* **Technical Root Cause:**
+  1. **ERB Gain Masking on Reverberant Speech:** DeepFilterNet applies neural gain masks across Equivalent Rectangular Bandwidth (ERB) subbands. When speech contains room reverberation or low SNR, rapid gain transitions between frames create spectral gating artifacts ("musical noise" and fluctuating volume).
+  2. **Phase Mismatch:** Synthesis of complex spectrogram bins can introduce phase discontinuities, creating the sensation of speaking through a hollow tube.
+* **Recommendations for Team:**
+  * **Atten Limiting:** Clamp maximum attenuation to a bounded floor (e.g. $-12\text{ dB}$ or $-15\text{ dB}$) rather than full suppression to prevent voice dropouts.
+  * **Dry/Wet Blending:** Blend 80% denoised with 20% raw audio to preserve natural vocal formant timbre.
+  * **Mono Simulation Limitation:** Note that testing with a mono WAV file duplicates audio across all 8 channels; Delay-and-Sum beamforming requires true multi-channel physical mic differences to form a spatial beam.
+
+### 💡 Software Delimiter: Explicit "END" Termination Keyword
+* **The Clinical Problem:** Relying solely on VAD silence detection in a noisy OR is brittle—HVAC noise or breathing can delay the silence trigger by 400–800 ms, while natural pauses between words can prematurely truncate sentences.
+* **Solution Implemented / Recommended:** Support an **explicit trailing command delimiter** (e.g. *"end"*, *"over"*, *"execute"*, or *"now"*), such as:
+  > *"Zoom in two times **end**"*  
+  > *"Next slice **over**"*
+* **Mechanism:** When ASR detects the termination keyword, it immediately flushes the utterance with `{"type": "end"}` over ZeroMQ, completely bypassing the silence hangover timer for zero-latency, unambiguous execution.
+
+---
+
+## 4. Teammate Watch-Outs & Recommendations
 
 1. **ALSA Gain Calibration Across Mic Array:** The Seeed 8-mic array has independent hardware gain sliders in ALSA. If channel 1 is at 80% and channel 3 is at 45%, Delay-and-Sum phase alignment breaks, causing muffled speech and reduced noise suppression. Ensure all perimeter mics are equalized:
    ```bash

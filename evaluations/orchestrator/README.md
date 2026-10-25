@@ -88,5 +88,36 @@ The following metrics were measured directly on physical hardware (`admin@PI4WUR
 * Currently, the supervisor detects crashes when the process terminates (`poll() is not None`).
 * If a process enters an infinite loop or deadlocks while holding a mutex, the process is technically alive, so the PID watchdog will not trigger.
 * **Recommendation:** Implement a lightweight 1-second ZeroMQ heartbeat ping/pong. If a worker fails to respond after 3 consecutive pings, the watchdog sends `SIGKILL` and respawns it.
+
+---
+
+## 5. Supported Clinical Monitor Commands & Intent Catalog
+
+The intraoperative dashboard (`http://localhost:8000`) and `CommandDispatcher` support the following canonical command intents defined in [`schemas/command_schema.json`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/schemas/command_schema.json) and executed via [`src/monitor/handlers/`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/monitor/handlers/):
+
+### A. DICOM Medical Scan Navigation (`MONITOR_DISPLAY`)
+
+| Intent | Sample Spoken Voice Commands | Valid Parameters / Slots | Display State & Action |
+| :--- | :--- | :--- | :--- |
+| **`zoom_display`** | • *"zoom in two times"*<br/>• *"zoom out 2.5 times"*<br/>• *"zoom in"* / *"zoom out"* | `direction`: `"IN"` \| `"OUT"`<br/>`factor`: float $\ge 1.0$ (default: `2.0`) | Multiplies or divides canvas magnification. Factor is clamped between **1.0x and 10.0x**. Updates zoom badge. |
+| **`navigate_slice`** | • *"next slice"*<br/>• *"advance forward 5 slices"*<br/>• *"previous slice"* / *"go back 10 slices"*<br/>• *"jump to slice number 45"* | **Relative:**<br/>`direction`: `"NEXT"` \| `"PREVIOUS"`<br/>`step_count`: int $\ge 1$ (default: 1)<br/>**Direct:**<br/>`slice_index`: int $\ge 1$ | Navigates the cross-sectional slice stack (CT/MRI). Slices clamp to min 1. Updates slice index counter HUD. |
+| **`open_scan`** | • *"open CT scan"*<br/>• *"show brain MRI"*<br/>• *"open chest X-ray"* | `scan_type`: `"ct"` \| `"mri"` \| `"xray"` | Loads specified modality series into viewport. Resets current slice to 1 and zoom factor to 1.0x. |
+| **`close_scan`** | • *"close scan"*<br/>• *"close current viewer"* | `scan_type`: string (optional) | Blanks the active canvas viewport and returns the display to idle standby. |
+| **`log_event`** | • *"record milestone trocar placed note clip attached"*<br/>• *"log milestone incision complete"* | `event_name`: string (required)<br/>`comment`: string (optional) | Appends an intraoperative surgical milestone to the EMR audit log table (timestamped, holds last 50 entries). |
+
+### B. Surgical Tool & Robot Handling (`TOOL_HANDLING`)
+
+| Intent | Sample Spoken Voice Commands | Valid Parameters / Slots | Robot & Telemetry State |
+| :--- | :--- | :--- | :--- |
+| **`pick_tool`** | • *"hand me the scalpel"*<br/>• *"pass the scissors"*<br/>• *"give me the hemostat"* / *"forceps"* | `tool_identifier`: `"scalpel"` \| `"scissors"` \| `"hemostat"` \| `"forceps"` | Updates held tool HUD indicator and sets gripper telemetry to `HOLDING <TOOL>` in `OPERATIONAL` status. |
+| **`park_arm`** | • *"park robotic arm"*<br/>• *"park arm"* | None | Clears active held tool, transitions gripper to `STANDBY / OFFLINE`, and sets robot status to `PARKED`. |
+
+### C. Surgical Safety & Emergency Halts (`EMERGENCY`)
+
+| Intent | Sample Spoken Voice Commands | Valid Parameters / Slots | Safety Interlock Action |
+| :--- | :--- | :--- | :--- |
+| **`halt_emergency`** | • *"emergency stop immediately freeze"*<br/>• *"halt robot"* / *"stop"* | None (Dispatched over non-blocking priority channel) | Flashes red critical emergency banner, locks all joint brakes (`EMERGENCY HALT (LOCKED)`). |
+| **`clear_emergency`** | • *"clear surgical area back off"*<br/>• *"clear emergency"* | None (Priority channel) | Clears lock and commands high-speed vertical ascent (+Z $\ge 250\text{ mm}$) to clear field for human intervention. |
+
 ---
 

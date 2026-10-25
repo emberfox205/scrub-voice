@@ -31,6 +31,7 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 ## 3. Teammate Watch-Outs & Recommendations
 
 ### ⚠️ Priority 1: Expanding Vocabulary for Surgeon Ease-of-Use
+* **Live Trial Finding:** Testing showed that the current grammar is too narrow—the speaker lacks the freedom to naturally use alternative words and phrasing that carry identical semantic intent within the clinical context.
 * **The Current State:** The active grammar contains $\sim 85$ core words covering basic navigation (`zoom`, `slice`, `pan`, `contrast`, `window`, `reset`, `stop`).
 * **The Clinical Problem:** Surgeons in a high-stress operating room will not speak like a rigid machine. They naturally use colloquial medical synonyms:
   * Instead of strictly *"open patient scan"*, they say *"bring up scan"*, *"pull up scan"*, or *"display scan"*.
@@ -42,7 +43,13 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
   * Adding 30 to 60 medical synonyms will increase decoding latency by **less than $10\text{ ms}$** on the Cortex-A72.
 * **Action Item for Team:** Expand `src/asr/grammar.py` (or the grammar definition file) to include clinical synonym alternatives.
 
-### ⚠️ Priority 2: Architectural Redundancy with NLU Normalization
+### 💡 Priority 2: Explicit "END" / Delimiter Keyword Support
+* **Why Silence Alone is Unreliable:** In sterile operating environments, ambient sound (HVAC airflow, suction, monitor beeps) makes quiet silence detection unpredictable. Waiting for the silence timer can feel sluggish or cause awkward hesitation.
+* **Proposed Explicit Delimiter:** Allow surgeons to optionally speak a closing delimiter keyword at the end of their utterance (e.g. *"end"*, *"over"*, *"execute"*, or *"now"*):
+  * Example: *"zoom in two times **end**"*, *"next slice **now**"*.
+* **ASR Fast-Path Execution:** The moment Vosk matches the termination keyword in the active lattice, it terminates speech capture and dispatches the command envelope immediately, achieving deterministic, zero-silence-delay execution.
+
+### ⚠️ Priority 3: Architectural Redundancy with NLU Normalization
 * **The Problem:** Currently, both `src/asr/normalize.py` and `src/nlu/normalizer.py` perform lexical normalization:
   * `src/asr/normalize.py` rewrites word numbers to digits (e.g., *"zoom in two times"* $\rightarrow$ *"zoom in 2 times"*).
   * `src/nlu/normalizer.py` *also* parses word numbers, normalizes casing, and handles unit abbreviations.
