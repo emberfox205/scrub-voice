@@ -121,12 +121,39 @@ def run_dsp_service(
     in_speech = False
     chunk_index = 0
     utterance_count = 0
-    current_utterance_chunks: list[np.ndarray] = []
-    all_session_chunks: list[np.ndarray] = []
+    current_raw_chunks: list[np.ndarray] = []
+    current_clean_chunks: list[np.ndarray] = []
+    all_raw_chunks: list[np.ndarray] = []
+    all_clean_chunks: list[np.ndarray] = []
 
     if dump_dir:
         dump_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Audio dump enabled -> processed audio will be saved to {dump_dir}")
+        logger.info(f"Audio dump enabled -> Before & After denoise audio will be saved to {dump_dir}")
+
+    def save_current_utterance() -> None:
+        nonlocal utterance_count, current_raw_chunks, current_clean_chunks
+        if not dump_dir or not current_clean_chunks:
+            return
+        utterance_count += 1
+        raw_audio = np.concatenate(current_raw_chunks)
+        clean_audio = np.concatenate(current_clean_chunks)
+
+        raw_path = dump_dir / f"utterance_{utterance_count:03d}_before_denoise.wav"
+        clean_path = dump_dir / f"utterance_{utterance_count:03d}_after_denoise.wav"
+
+        sf.write(str(raw_path), raw_audio, SAMPLE_RATE)
+        sf.write(str(clean_path), clean_audio, SAMPLE_RATE)
+
+        rms_raw = float(np.sqrt(np.mean(raw_audio**2)))
+        rms_clean = float(np.sqrt(np.mean(clean_audio**2)))
+        db_diff = 20 * np.log10((rms_clean + 1e-9) / (rms_raw + 1e-9))
+
+        logger.info(
+            f"Saved utterance #{utterance_count:03d} -> Before: {raw_path.name} | After: {clean_path.name} "
+            f"(Delta: {db_diff:+.1f} dB, Duration: {len(clean_audio)/SAMPLE_RATE:.2f}s)"
+        )
+        current_raw_chunks = []
+        current_clean_chunks = []
 
     try:
         with streamer:
@@ -137,13 +164,7 @@ def run_dsp_service(
                     logger.info("Stream source reached EOF.")
                     if in_speech:
                         push.send_multipart([orjson.dumps({"type": "end"})])
-                        if dump_dir and current_utterance_chunks:
-                            utterance_count += 1
-                            utt_audio = np.concatenate(current_utterance_chunks)
-                            utt_path = dump_dir / f"utterance_{utterance_count:03d}.wav"
-                            sf.write(str(utt_path), utt_audio, SAMPLE_RATE)
-                            logger.info(f"Saved processed audio utterance to {utt_path} ({len(utt_audio)/SAMPLE_RATE:.2f}s)")
-                            current_utterance_chunks = []
+                        save_current_utterance()
                         in_speech = False
                     break
 
@@ -159,13 +180,7 @@ def run_dsp_service(
                     if in_speech:
                         # Speech just ended: send 'end' message to trigger final ASR transcription
                         push.send_multipart([orjson.dumps({"type": "end"})])
-                        if dump_dir and current_utterance_chunks:
-                            utterance_count += 1
-                            utt_audio = np.concatenate(current_utterance_chunks)
-                            utt_path = dump_dir / f"utterance_{utterance_count:03d}.wav"
-                            sf.write(str(utt_path), utt_audio, SAMPLE_RATE)
-                            logger.info(f"Saved processed audio utterance to {utt_path} ({len(utt_audio)/SAMPLE_RATE:.2f}s)")
-                            current_utterance_chunks = []
+                        save_current_utterance()
                         in_speech = False
                         logger.info(f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR")
                     continue
@@ -192,30 +207,34 @@ def run_dsp_service(
                 else:
                     clean_chunk = mono_audio
 
+                # Compute dB attenuation applied by DeepFilterNet
+                rms_in = float(np.sqrt(np.mean(mono_audio**2)))
+                rms_out = float(np.sqrt(np.mean(clean_chunk**2)))
+                chunk_db = 20 * np.log10((rms_out + 1e-9) / (rms_in + 1e-9))
+
                 if dump_dir:
-                    current_utterance_chunks.append(clean_chunk.copy())
-                    all_session_chunks.append(clean_chunk.copy())
+                    current_raw_chunks.append(mono_audio.copy())
+                    current_clean_chunks.append(clean_chunk.copy())
+                    all_raw_chunks.append(mono_audio.copy())
+                    all_clean_chunks.append(clean_chunk.copy())
 
                 header = {"type": "chunk", "capture_time": capture_time}
                 push.send_multipart([orjson.dumps(header), clean_chunk.astype(np.float32).tobytes()])
                 logger.info(
-                    f"Chunk #{chunk_index:04d} | VAD: SPEECH ({t_vad:.1f}ms) | Angle: {angle_desc} -> Pushed 8000 samples to ASR"
+                    f"Chunk #{chunk_index:04d} | VAD: SPEECH ({t_vad:.1f}ms) | Angle: {angle_desc} | Denoise: {chunk_db:+.1f}dB -> Pushed 8000 samples to ASR"
                 )
 
     except KeyboardInterrupt:
         logger.info("DSP service interrupted by user.")
     finally:
         if dump_dir:
-            if current_utterance_chunks:
-                utterance_count += 1
-                utt_audio = np.concatenate(current_utterance_chunks)
-                utt_path = dump_dir / f"utterance_{utterance_count:03d}.wav"
-                sf.write(str(utt_path), utt_audio, SAMPLE_RATE)
-                logger.info(f"Saved final audio utterance to {utt_path}")
-            if all_session_chunks:
-                session_path = dump_dir / "session_full_cleaned.wav"
-                sf.write(str(session_path), np.concatenate(all_session_chunks), SAMPLE_RATE)
-                logger.info(f"Saved full session audio to {session_path}")
+            save_current_utterance()
+            if all_raw_chunks and all_clean_chunks:
+                raw_session = dump_dir / "session_before_denoise.wav"
+                clean_session = dump_dir / "session_after_denoise.wav"
+                sf.write(str(raw_session), np.concatenate(all_raw_chunks), SAMPLE_RATE)
+                sf.write(str(clean_session), np.concatenate(all_clean_chunks), SAMPLE_RATE)
+                logger.info(f"Saved full session audio: {raw_session.name} and {clean_session.name}")
         if in_speech:
             try:
                 push.send_multipart([orjson.dumps({"type": "end"})], flags=zmq.NOBLOCK)
