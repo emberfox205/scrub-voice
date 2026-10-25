@@ -56,7 +56,7 @@ uv run python test/benchmark_edge_profile.py --threads 2 --no-pin --wav data/asr
   * `--iterations <N>`: Repetition count per sample vector (default: 5).
 * **Outputs:**
   * Live console summary table with pass/fail threshold status.
-  * Machine-readable telemetry saved to [`results/benchmark_edge_profile.json`](../results/benchmark_edge_profile.json).
+  * Machine-readable telemetry saved to `results/benchmark_edge_profile.json`.
 
 ---
 
@@ -80,8 +80,8 @@ uv run python src/orchestrator/supervisor.py \
     3. `utterance_XXX_3_denoised.wav`: DeepFilterNet suppressed speech sent to ASR.
 * **Outputs & Live Inspection:**
   * Browser UI: Open `http://localhost:8000` (or `http://<PI_IP>:8000`) for the live DICOM viewer.
-  * ASR Transcripts: Word tokens and confidences append to [`results/asr_transcripts.jsonl`](../results/asr_transcripts.jsonl).
-  * NLU Envelopes: Validated command envelopes append to [`results/nlu_envelopes.jsonl`](../results/nlu_envelopes.jsonl).
+  * ASR Transcripts: Word tokens and confidences append to `results/asr_transcripts.jsonl`.
+  * NLU Envelopes: Validated command envelopes append to `results/nlu_envelopes.jsonl`.
   * Audio Verification: Inspect the 3 progressive WAV files in `results/dsp_debug/` with any media player or Audacity.
 
 ---
