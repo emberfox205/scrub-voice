@@ -157,8 +157,10 @@ class NLUService:
         if dest_sock:
             dest_sock.send(payload_bytes)
 
+        slots = envelope.get("slots", {})
+        slots_str = f" | slots={slots}" if slots else ""
         logger.info(
-            "Routed [%s] -> %s (%s | %s) status=%s conf=%.2f in %.2fms",
+            "Routed [%s] -> %s (%s | %s) status=%s conf=%.2f in %.2fms%s",
             dest_name,
             envelope.get("command_id"),
             envelope.get("category"),
@@ -166,7 +168,18 @@ class NLUService:
             envelope.get("status"),
             envelope.get("confidence", 0.0),
             pipeline_ms,
+            slots_str,
         )
+
+        # Save to debug ledger
+        try:
+            nlu_log = REPO_ROOT / "results" / "nlu_envelopes.jsonl"
+            nlu_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(nlu_log, "a", encoding="utf-8") as f:
+                f.write(orjson.dumps(envelope).decode("utf-8") + "\n")
+        except Exception:
+            pass
+
         return envelope
 
     def run(self) -> None:

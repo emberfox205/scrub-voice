@@ -23,6 +23,7 @@ from typing import Optional
 
 import numpy as np
 import orjson
+import soundfile as sf
 import zmq
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +76,7 @@ def run_dsp_service(
     vad_threshold: float = 0.35,
     realtime: bool = True,
     loop: bool = False,
+    dump_dir: Optional[Path] = None,
 ) -> None:
     """Run the DSP streaming loop."""
     logger.info("Initializing DSP subsystems...")
@@ -118,6 +120,13 @@ def run_dsp_service(
 
     in_speech = False
     chunk_index = 0
+    utterance_count = 0
+    current_utterance_chunks: list[np.ndarray] = []
+    all_session_chunks: list[np.ndarray] = []
+
+    if dump_dir:
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Audio dump enabled -> processed audio will be saved to {dump_dir}")
 
     try:
         with streamer:
@@ -128,6 +137,13 @@ def run_dsp_service(
                     logger.info("Stream source reached EOF.")
                     if in_speech:
                         push.send_multipart([orjson.dumps({"type": "end"})])
+                        if dump_dir and current_utterance_chunks:
+                            utterance_count += 1
+                            utt_audio = np.concatenate(current_utterance_chunks)
+                            utt_path = dump_dir / f"utterance_{utterance_count:03d}.wav"
+                            sf.write(str(utt_path), utt_audio, SAMPLE_RATE)
+                            logger.info(f"Saved processed audio utterance to {utt_path} ({len(utt_audio)/SAMPLE_RATE:.2f}s)")
+                            current_utterance_chunks = []
                         in_speech = False
                     break
 
@@ -143,6 +159,13 @@ def run_dsp_service(
                     if in_speech:
                         # Speech just ended: send 'end' message to trigger final ASR transcription
                         push.send_multipart([orjson.dumps({"type": "end"})])
+                        if dump_dir and current_utterance_chunks:
+                            utterance_count += 1
+                            utt_audio = np.concatenate(current_utterance_chunks)
+                            utt_path = dump_dir / f"utterance_{utterance_count:03d}.wav"
+                            sf.write(str(utt_path), utt_audio, SAMPLE_RATE)
+                            logger.info(f"Saved processed audio utterance to {utt_path} ({len(utt_audio)/SAMPLE_RATE:.2f}s)")
+                            current_utterance_chunks = []
                         in_speech = False
                         logger.info(f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR")
                     continue
@@ -151,11 +174,14 @@ def run_dsp_service(
 
                 # Gate 2 & Mod 3: Spatial Localizer & DAS Beamformer
                 mono_audio = None
+                angle_desc = "omni"
                 if use_spatial and localizer is not None and beamformer is not None:
                     detected_angles, _ = localizer.localize(chunk)
                     if detected_angles:
+                        angle_desc = f"{detected_angles[0]:.1f}°"
                         mono_audio = beamformer.beamform(chunk, target_angles=detected_angles[0])
                     else:
+                        angle_desc = "diffuse"
                         mono_audio = np.mean(chunk, axis=0)
                 else:
                     mono_audio = np.mean(chunk, axis=0)
@@ -166,15 +192,30 @@ def run_dsp_service(
                 else:
                     clean_chunk = mono_audio
 
+                if dump_dir:
+                    current_utterance_chunks.append(clean_chunk.copy())
+                    all_session_chunks.append(clean_chunk.copy())
+
                 header = {"type": "chunk", "capture_time": capture_time}
                 push.send_multipart([orjson.dumps(header), clean_chunk.astype(np.float32).tobytes()])
                 logger.info(
-                    f"Chunk #{chunk_index:04d} | VAD: SPEECH ({t_vad:.1f}ms) -> Pushed 8000 samples to ASR"
+                    f"Chunk #{chunk_index:04d} | VAD: SPEECH ({t_vad:.1f}ms) | Angle: {angle_desc} -> Pushed 8000 samples to ASR"
                 )
 
     except KeyboardInterrupt:
         logger.info("DSP service interrupted by user.")
     finally:
+        if dump_dir:
+            if current_utterance_chunks:
+                utterance_count += 1
+                utt_audio = np.concatenate(current_utterance_chunks)
+                utt_path = dump_dir / f"utterance_{utterance_count:03d}.wav"
+                sf.write(str(utt_path), utt_audio, SAMPLE_RATE)
+                logger.info(f"Saved final audio utterance to {utt_path}")
+            if all_session_chunks:
+                session_path = dump_dir / "session_full_cleaned.wav"
+                sf.write(str(session_path), np.concatenate(all_session_chunks), SAMPLE_RATE)
+                logger.info(f"Saved full session audio to {session_path}")
         if in_speech:
             try:
                 push.send_multipart([orjson.dumps({"type": "end"})], flags=zmq.NOBLOCK)
@@ -195,6 +236,7 @@ def main() -> None:
     parser.add_argument("--vad-threshold", type=float, default=0.35, help="Silero VAD threshold")
     parser.add_argument("--fast", dest="realtime", action="store_false", help="Simulate faster than real time")
     parser.add_argument("--loop", action="store_true", help="Loop WAV file continuously")
+    parser.add_argument("--dump-audio", type=Path, default=None, help="Directory to save cleaned audio utterances and full session")
     parser.set_defaults(denoise=True, spatial=True, realtime=True)
 
     args = parser.parse_args()
@@ -207,6 +249,7 @@ def main() -> None:
         vad_threshold=args.vad_threshold,
         realtime=args.realtime,
         loop=args.loop,
+        dump_dir=args.dump_audio,
     )
 
 
