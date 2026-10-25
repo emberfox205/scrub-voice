@@ -1,0 +1,64 @@
+{
+  "timestamp": 1792903379.3885798,
+  "host_platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "target_target": "Raspberry Pi 4 (Cortex-A72 ARM64, 4GB RAM)",
+  "python_version": "3.13.5",
+  "torch_threads": 1,
+  "onnx_threads": 1,
+  "core_pinned": true,
+  "modules": {
+    "dsp_denoiser": {
+      "status": "PASS",
+      "model": "DeepFilterNet ONNX",
+      "load_time_s": 0.2,
+      "mean_latency_ms": 48.51,
+      "p95_latency_ms": 68.14,
+      "rtf": 0.0485,
+      "rtf_budget": 0.50,
+      "ram_load_delta_mb": 29.3,
+      "ram_peak_mb": 652.8
+    },
+    "nlu_pipeline": {
+      "status": "PASS",
+      "model": "SetFit bge-micro-v2 (8k dataset)",
+      "load_time_s": 0.64,
+      "mean_latency_ms": 19.04,
+      "p50_latency_ms": 18.71,
+      "p95_latency_ms": 22.72,
+      "p99_latency_ms": 24.61,
+      "latency_budget_p95_ms": 100.0,
+      "schema_compliance_pct": 100.0,
+      "ood_rejection_pct": 100.0,
+      "ram_load_delta_mb": 42.0,
+      "ram_peak_mb": 614.0,
+      "ram_budget_mb": 800.0
+    },
+    "orchestrator_broker": {
+      "status": "PASS",
+      "broker": "ZeroMQ IPC Dual-Channel + LVC Cache",
+      "mean_latency_ms": 0.36,
+      "p95_latency_ms": 0.52,
+      "latency_budget_p95_ms": 5.0
+    },
+    "supervisor_chaos": {
+      "status": "PASS",
+      "watchdog_interval_ms": 200,
+      "kill_signal": "SIGKILL (kill -9)",
+      "mean_recovery_ms": 358.2,
+      "p95_recovery_ms": 410.3,
+      "recovery_budget_ms": 500.0,
+      "web_monitor_interruption": false,
+      "packet_loss_mitigation": "ZeroMQ High-Water Mark (HWM=50)"
+    },
+    "pipeline_e2e_stream": {
+      "status": "PASS",
+      "audio_source": "WAV 16kHz float32 stream",
+      "dsp_vad_latency_ms": 0.7,
+      "asr_latency_ms": 100.0,
+      "nlu_inference_ms": 23.08,
+      "dispatcher_transit_ms": 0.36,
+      "total_voice_to_display_latency_ms": 124.14,
+      "websocket_broadcast": "Verified"
+    }
+  }
+}
