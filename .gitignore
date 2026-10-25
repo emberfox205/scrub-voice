@@ -50,3 +50,6 @@ data/asr/commands_dev/
 data/asr/commands_heldout/
 data/asr/non_command/
 data/asr/noise_only/
+
+# Heavy Binary
+*.safetensors

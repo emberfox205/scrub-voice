@@ -4,7 +4,8 @@ scipy>=1.10.0
 matplotlib>=3.7.0
 
 # Robot Subsystem, RTDE & Physics Simulation (UR10e / URSim / MuJoCo)
-ur-rtde>=1.6.5
+# Note: ur-rtde is deferred to the robotics branch; excluded for Python 3.13 Assemble_V1 monitor pipeline.
+# ur-rtde>=1.6.5
 mujoco>=3.1.0
 
 # Dependency analysis & cleanup utilities
@@ -23,7 +24,7 @@ websockets>=12.0
 httpx>=0.27.0
 
 # NLU Intent Classification Requirements for Raspberry Pi 4 (aarch64)
-# Python 3.9 / 3.10 / 3.11 / 3.12 on Raspberry Pi OS 64-bit
+# Python 3.9 / 3.10 / 3.11 / 3.12 / 3.13 (Python 3.13.5 target)
 
 # Core Machine Learning Framework (Prebuilt wheels available on PyPI for aarch64)
 torch>=2.0.0
