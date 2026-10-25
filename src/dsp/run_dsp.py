@@ -121,39 +121,46 @@ def run_dsp_service(
     in_speech = False
     chunk_index = 0
     utterance_count = 0
-    current_raw_chunks: list[np.ndarray] = []
-    current_clean_chunks: list[np.ndarray] = []
-    all_raw_chunks: list[np.ndarray] = []
-    all_clean_chunks: list[np.ndarray] = []
+    current_raw_mic1: list[np.ndarray] = []
+    current_beamformed: list[np.ndarray] = []
+    current_denoised: list[np.ndarray] = []
+    all_raw_mic1: list[np.ndarray] = []
+    all_beamformed: list[np.ndarray] = []
+    all_denoised: list[np.ndarray] = []
 
     if dump_dir:
         dump_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Audio dump enabled -> Before & After denoise audio will be saved to {dump_dir}")
+        logger.info(f"Audio dump enabled -> 3 stages (raw, beamformed, denoised) will be saved to {dump_dir}")
 
     def save_current_utterance() -> None:
-        nonlocal utterance_count, current_raw_chunks, current_clean_chunks
-        if not dump_dir or not current_clean_chunks:
+        nonlocal utterance_count, current_raw_mic1, current_beamformed, current_denoised
+        if not dump_dir or not current_denoised:
             return
         utterance_count += 1
-        raw_audio = np.concatenate(current_raw_chunks)
-        clean_audio = np.concatenate(current_clean_chunks)
+        raw_m1 = np.concatenate(current_raw_mic1)
+        beam_m = np.concatenate(current_beamformed)
+        clean_m = np.concatenate(current_denoised)
 
-        raw_path = dump_dir / f"utterance_{utterance_count:03d}_before_denoise.wav"
-        clean_path = dump_dir / f"utterance_{utterance_count:03d}_after_denoise.wav"
+        raw_path = dump_dir / f"utterance_{utterance_count:03d}_1_raw_mic1.wav"
+        beam_path = dump_dir / f"utterance_{utterance_count:03d}_2_beamformed.wav"
+        clean_path = dump_dir / f"utterance_{utterance_count:03d}_3_denoised.wav"
 
-        sf.write(str(raw_path), raw_audio, SAMPLE_RATE)
-        sf.write(str(clean_path), clean_audio, SAMPLE_RATE)
+        sf.write(str(raw_path), raw_m1, SAMPLE_RATE)
+        sf.write(str(beam_path), beam_m, SAMPLE_RATE)
+        sf.write(str(clean_path), clean_m, SAMPLE_RATE)
 
-        rms_raw = float(np.sqrt(np.mean(raw_audio**2)))
-        rms_clean = float(np.sqrt(np.mean(clean_audio**2)))
+        rms_raw = float(np.sqrt(np.mean(raw_m1**2)))
+        rms_beam = float(np.sqrt(np.mean(beam_m**2)))
+        rms_clean = float(np.sqrt(np.mean(clean_m**2)))
         db_diff = 20 * np.log10((rms_clean + 1e-9) / (rms_raw + 1e-9))
 
         logger.info(
-            f"Saved utterance #{utterance_count:03d} -> Before: {raw_path.name} | After: {clean_path.name} "
-            f"(Delta: {db_diff:+.1f} dB, Duration: {len(clean_audio)/SAMPLE_RATE:.2f}s)"
+            f"Saved utterance #{utterance_count:03d} -> [1] Raw: {raw_path.name} | [2] Beamformed: {beam_path.name} "
+            f"| [3] Denoised: {clean_path.name} (Delta: {db_diff:+.1f} dB, Duration: {len(clean_m)/SAMPLE_RATE:.2f}s)"
         )
-        current_raw_chunks = []
-        current_clean_chunks = []
+        current_raw_mic1 = []
+        current_beamformed = []
+        current_denoised = []
 
     try:
         with streamer:
@@ -212,11 +219,16 @@ def run_dsp_service(
                 rms_out = float(np.sqrt(np.mean(clean_chunk**2)))
                 chunk_db = 20 * np.log10((rms_out + 1e-9) / (rms_in + 1e-9))
 
+                # Extract Channel 0 (Microphone 1) for raw A/B/C comparison
+                raw_mic1_audio = chunk[0] if chunk.ndim > 1 else chunk
+
                 if dump_dir:
-                    current_raw_chunks.append(mono_audio.copy())
-                    current_clean_chunks.append(clean_chunk.copy())
-                    all_raw_chunks.append(mono_audio.copy())
-                    all_clean_chunks.append(clean_chunk.copy())
+                    current_raw_mic1.append(raw_mic1_audio.copy())
+                    current_beamformed.append(mono_audio.copy())
+                    current_denoised.append(clean_chunk.copy())
+                    all_raw_mic1.append(raw_mic1_audio.copy())
+                    all_beamformed.append(mono_audio.copy())
+                    all_denoised.append(clean_chunk.copy())
 
                 header = {"type": "chunk", "capture_time": capture_time}
                 push.send_multipart([orjson.dumps(header), clean_chunk.astype(np.float32).tobytes()])
@@ -229,12 +241,14 @@ def run_dsp_service(
     finally:
         if dump_dir:
             save_current_utterance()
-            if all_raw_chunks and all_clean_chunks:
-                raw_session = dump_dir / "session_before_denoise.wav"
-                clean_session = dump_dir / "session_after_denoise.wav"
-                sf.write(str(raw_session), np.concatenate(all_raw_chunks), SAMPLE_RATE)
-                sf.write(str(clean_session), np.concatenate(all_clean_chunks), SAMPLE_RATE)
-                logger.info(f"Saved full session audio: {raw_session.name} and {clean_session.name}")
+            if all_denoised:
+                raw_session = dump_dir / "session_1_raw_mic1.wav"
+                beam_session = dump_dir / "session_2_beamformed.wav"
+                clean_session = dump_dir / "session_3_denoised.wav"
+                sf.write(str(raw_session), np.concatenate(all_raw_mic1), SAMPLE_RATE)
+                sf.write(str(beam_session), np.concatenate(all_beamformed), SAMPLE_RATE)
+                sf.write(str(clean_session), np.concatenate(all_denoised), SAMPLE_RATE)
+                logger.info(f"Saved full session 3 stages: {raw_session.name}, {beam_session.name}, {clean_session.name}")
         if in_speech:
             try:
                 push.send_multipart([orjson.dumps({"type": "end"})], flags=zmq.NOBLOCK)
