@@ -243,29 +243,37 @@ def main() -> None:
     parser.add_argument("--test-utterance", type=str, default=None, help="Process single utterance and exit")
     args = parser.parse_args()
 
-    service = NLUService(
-        asr_addr=args.asr_addr,
-        nlu_addr=args.nlu_addr,
-        priority_addr=args.priority_addr,
-        model_dir=args.model_dir,
-        num_threads=args.threads,
-    )
-
-    if args.test_utterance:
-        print(f"Testing utterance: {args.test_utterance}")
-        envelope = service.pipeline.process(args.test_utterance)
-        print(json.dumps(envelope, indent=2))
-        sys.exit(0)
+    service = None
 
     def handle_signal(sig, frame):
         logger.info("Caught signal %d; initiating shutdown...", sig)
-        service.stop()
+        if service is not None:
+            service.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    service.run()
+    try:
+        service = NLUService(
+            asr_addr=args.asr_addr,
+            nlu_addr=args.nlu_addr,
+            priority_addr=args.priority_addr,
+            model_dir=args.model_dir,
+            num_threads=args.threads,
+        )
+
+        if args.test_utterance:
+            print(f"Testing utterance: {args.test_utterance}")
+            envelope = service.pipeline.process(args.test_utterance)
+            print(json.dumps(envelope, indent=2))
+            sys.exit(0)
+
+        service.run()
+    except (KeyboardInterrupt, SystemExit):
+        if service is not None:
+            service.stop()
+        sys.exit(0)
 
 
 if __name__ == "__main__":
