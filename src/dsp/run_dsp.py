@@ -73,7 +73,7 @@ def run_dsp_service(
     device: str = "plughw:seeed8micvoicec,0",
     use_denoiser: bool = True,
     use_spatial: bool = True,
-    vad_threshold: float = 0.35,
+    vad_threshold: float = 0.5,
     realtime: bool = True,
     loop: bool = False,
     dump_dir: Optional[Path] = None,
@@ -233,7 +233,7 @@ def main() -> None:
     parser.add_argument("--audio-addr", type=str, default=DEFAULT_AUDIO_ADDR, help="ZeroMQ audio address")
     parser.add_argument("--no-denoise", dest="denoise", action="store_false", help="Bypass DeepFilterNet denoiser")
     parser.add_argument("--no-spatial", dest="spatial", action="store_false", help="Bypass localizer and beamformer")
-    parser.add_argument("--vad-threshold", type=float, default=0.35, help="Silero VAD threshold")
+    parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD threshold")
     parser.add_argument("--fast", dest="realtime", action="store_false", help="Simulate faster than real time")
     parser.add_argument("--loop", action="store_true", help="Loop WAV file continuously")
     parser.add_argument("--dump-audio", type=Path, default=None, help="Directory to save cleaned audio utterances and full session")

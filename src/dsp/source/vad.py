@@ -36,12 +36,25 @@ class SileroVAD:
         tensor_audio = torch.from_numpy(ref_audio).float()
         num_samples = len(tensor_audio)
 
+        speech_probs = []
         for start in range(0, num_samples - self.window_size_samples + 1, self.window_size_samples):
             window = tensor_audio[start : start + self.window_size_samples]
             with torch.no_grad():
                 speech_prob = self.model(window, self.sample_rate).item()
+            speech_probs.append(speech_prob)
 
-            if speech_prob >= self.threshold:
-                return True
-     
-        return False
+        if not speech_probs:
+            return False
+
+        # Consider chunk active if at least 3 windows (~96ms) exceed threshold,
+        # or average speech probability across the chunk exceeds threshold.
+        active_windows = sum(1 for p in speech_probs if p >= self.threshold)
+        is_active = (active_windows >= 3) or (float(np.mean(speech_probs)) >= self.threshold)
+
+        if not is_active:
+            try:
+                self.model.reset_states()
+            except Exception:
+                pass
+
+        return is_active
