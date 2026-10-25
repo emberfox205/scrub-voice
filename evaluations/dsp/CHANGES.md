@@ -35,3 +35,4 @@ This document logs all architectural and algorithmic modifications made to the D
 
 ### C. Clean Signal Teardown
 * Added `signal.SIGINT` and `signal.SIGTERM` handlers to cleanly close ALSA capture streams and terminate ZeroMQ sockets without leaving orphaned file handles.
+

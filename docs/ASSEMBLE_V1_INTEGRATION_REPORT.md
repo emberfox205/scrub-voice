@@ -71,9 +71,9 @@ uv run python src/orchestrator/supervisor.py \
   --dump-audio results/dsp_debug
 ```
 
-### Run Edge Profiler (2 PyTorch/ONNX Threads)
+### Run Edge Profiler (2 PyTorch/ONNX Threads, Custom WAV)
 ```bash
-uv run python test/benchmark_edge_profile.py --threads 2
+uv run python test/benchmark_edge_profile.py --threads 2 --no-pin --wav data/asr/test_mix_voice.wav
 ```
 
 ### Launch Intraoperative Browser Monitor

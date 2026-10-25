@@ -64,18 +64,25 @@ def get_process_memory_mb() -> float:
 # ---------------------------------------------------------------------------
 # 1. Benchmark: DeepFilterNet ONNX Denoiser
 # ---------------------------------------------------------------------------
-def benchmark_denoiser(iterations: int = 5) -> Dict[str, Any]:
+def benchmark_denoiser(wav_path: Optional[str] = None, iterations: int = 5) -> Dict[str, Any]:
     print("\n" + "=" * 70)
     print(" [1/3] PROFILING DSP AI DENOISER (DeepFilterNet ONNX)")
     print("=" * 70)
 
     model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
-    test_wav = REPO_ROOT / "src" / "dsp" / "denoise" / "audio" / "noise_audio.wav"
+    
+    if wav_path:
+        test_wav = Path(wav_path).resolve()
+    else:
+        test_wav = REPO_ROOT / "src" / "dsp" / "denoise" / "audio" / "noise_audio.wav"
+        if not test_wav.exists():
+            test_wav = REPO_ROOT / "data" / "asr" / "sample_01.wav"
 
     if not model_path.exists() or not test_wav.exists():
-        print("  [!] Warning: DeepFilterNet model or test audio not found. Skipping.")
+        print(f"  [!] Warning: DeepFilterNet model or test audio not found (checked {test_wav}). Skipping.")
         return {"status": "SKIPPED"}
 
+    print(f"  Profiling Audio Source: {test_wav.name}")
     proc = psutil.Process(os.getpid()) if psutil else None
     ram_init_mb = get_process_memory_mb()
 
@@ -321,12 +328,15 @@ def main():
     parser.add_argument("--iterations", type=int, default=5, help="Test iterations per sample")
     parser.add_argument("--threads", type=int, default=1, help="PyTorch CPU worker threads (default: 1 for Pi 4)")
     parser.add_argument("--no-pin", action="store_true", help="Do not pin process to Core 0")
+    parser.add_argument("--wav", type=str, default=None, help="Path to custom WAV file for denoiser profiling")
     args = parser.parse_args()
 
     print("*" * 70)
     print(" SCRUB-VOICE: RASPBERRY PI 4 EDGE VALIDATION & RESOURCE PROFILE")
     print(f" Host: {platform.platform()} | Python: {platform.python_version()}")
     print(f" Emulation Mode: PyTorch Threads = {args.threads} | Core Pinning = {not args.no_pin}")
+    if args.wav:
+        print(f" Custom Audio Input: {args.wav}")
     print("*" * 70)
 
     report = {
@@ -339,7 +349,7 @@ def main():
     }
 
     # 1. Denoiser
-    report["modules"]["dsp_denoiser"] = benchmark_denoiser(iterations=args.iterations)
+    report["modules"]["dsp_denoiser"] = benchmark_denoiser(wav_path=args.wav, iterations=args.iterations)
 
     # 2. NLU
     report["modules"]["nlu_pipeline"] = benchmark_nlu(

@@ -40,3 +40,4 @@ flowchart LR
 
 ### D. Automated Edge Profiling Suite
 * Created [`test/benchmark_edge_profile.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/test/benchmark_edge_profile.py) to profile real hardware latency, RTF, and RSS memory directly on Raspberry Pi 4 (ARM64) and emit machine-readable telemetry to `results/benchmark_edge_profile.json`.
+

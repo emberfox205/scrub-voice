@@ -31,3 +31,4 @@ This document logs all architectural and algorithmic modifications made to the N
 ### B. Early Signal Registration Fix
 * **Old Behavior:** In early assembly runs, killing the supervisor while NLU was loading weights resulted in an unhandled multi-line `KeyboardInterrupt` traceback during PyTorch tensor allocation.
 * **New Behavior:** `signal.signal(signal.SIGINT, handle_signal)` and `signal.signal(signal.SIGTERM, handle_signal)` are registered at the very top of `main()` in [`src/nlu/run_nlu.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/nlu/run_nlu.py), ensuring clean, quiet exit.
+

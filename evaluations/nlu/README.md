@@ -16,11 +16,11 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 
 *Target Budget:* Mean Latency $\le 200.0\text{ ms}$, P95 Latency $\le 250.0\text{ ms}$.
 
-### Memory, Schema & Out-of-Domain Profile
-* **Cold-Start Model Load Time:** **0.59 s** on native Linux / Pi 4 (up to 75s across WSL NTFS cross-mounts; supervisor warmup barrier set to 120s).
-* **Peak Resident RAM:** **635.5 MB** (Budget $\le 800.0\text{ MB}$, PASS).
-* **Draft 2020-12 Schema Compliance:** **100.0%** (85/85 command envelopes strictly valid).
-* **Out-of-Domain (OOD) Rejection:** **100.0%** (15/15 distractor sentences safely rejected as `UNKNOWN`).
+### Memory & Reliability Profile
+* **Cold-Start Load Time:** **0.59 s** on native Linux / Pi 4 (Note: Can take up to 75s when accessing files across WSL Windows NTFS mounts; supervisor timeout is set to 120s to accommodate this).
+* **RAM Allocation:** Initial load $+42.0\text{ MB}$, Peak Resident Set Size (RSS) **635.5 MB** (Budget $< 800.0\text{ MB}$, PASS).
+* **Draft 2020-12 Schema Compliance:** **100.0%** across all test vectors.
+* **Out-of-Domain (OOD) Rejection:** **100.0%** (non-surgical background speech successfully rejected with `UNKNOWN`).
 
 ---
 
@@ -34,6 +34,27 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 
 ## 3. Teammate Watch-Outs & Recommendations
 
-1. **NLU Should Own All Normalization:** Remove text normalization from ASR. `src/nlu/normalizer.py` already handles casing, filler words, spelled-out numbers, and medical abbreviations.
-2. **INT8 Quantization Roadmap:** PyTorch dynamic INT8 quantization (`torch.ao.quantization.quantize_dynamic`) can cut inference latency on ARM64 NEON from **$152\text{ ms} \rightarrow \sim 65 - 75\text{ ms}$** with $< 0.5\%$ accuracy loss.
-3. **Contextual Intent Disambiguation:** For relative adjustments (*"do it again"*, *"a bit more"*), NLU can query the Orchestrator's Last-Value-Cache (LVC) via `ipc:///tmp/scrub_snapshot.ipc` to resolve parameters from prior state.
+### ⚠️ Priority 1: NLU Should Own All Normalization & Lexical Parsing
+* **Current Overlap:** ASR (`src/asr/normalize.py`) currently rewrites number words into digits before forwarding to NLU.
+* **Recommendation:**
+  * Cleanly decouple the services: ASR emits raw acoustic words.
+  * `src/nlu/normalizer.py` should be the single, authoritative text normalizer. It already contains robust tokenization, digit parsing, and unit handling.
+
+### 💡 Optimization Roadmap: INT8 Dynamic Quantization
+* Currently, the transformer encoder runs in Float32 precision.
+* Because PyTorch on ARM64 includes native support for NEON INT8 matrix multiplications (`torch.ao.quantization.quantize_dynamic`), quantizing the linear projection weights can:
+  1. Cut inference latency from **$152\text{ ms} \rightarrow \sim 65 - 75\text{ ms}$**.
+  2. Reduce model disk and RAM footprint by **$> 50\%$**.
+  3. Maintain $> 99.5\%$ intent classification accuracy.
+* **Implementation Recipe for Team:**
+  ```python
+  import torch
+  quantized_model = torch.ao.quantization.quantize_dynamic(
+      pipeline.model, {torch.nn.Linear}, dtype=torch.qint8
+  )
+  ```
+### 💡 Multi-Turn / Contextual Intent Disambiguation
+* Currently, each NLU inference is stateless (one-shot).
+* If a surgeon says *"zoom in twice"* and subsequently follows with *"do it again"* or *"undo that"*, a stateless parser cannot resolve the target parameter.
+* **Recommendation:** Integrate an optional query to the Orchestrator's Last-Value-Cache (LVC) via `ipc:///tmp/scrub_snapshot.ipc` to resolve contextual pronouns and relative adjustments.
+

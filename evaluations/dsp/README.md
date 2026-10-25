@@ -10,13 +10,13 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 
 | Metric | Target Budget | 1 Thread | 2 Threads | 3 Threads | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **DeepFilterNet Mean Latency (1.0s chunk)** | $\le 500.0\text{ ms}$ | **448.97 ms** | 451.93 ms | 453.36 ms | **PASS** |
-| **DeepFilterNet P95 Latency** | $\le 500.0\text{ ms}$ | **458.35 ms** | 460.58 ms | 463.23 ms | **PASS** |
-| **Real-Time Factor (RTF)** | $\le 0.50$ | **0.4490** | 0.4519 | 0.4534 | **PASS** |
-| **DeepFilterNet Load RAM Delta** | $\le 50.0\text{ MB}$ | $+29.3\text{ MB}$ | $+29.3\text{ MB}$ | $+29.3\text{ MB}$ | **PASS** |
-| **Silero VAD Latency (per 32ms frame)** | $\le 10.0\text{ ms}$ | $3.8 - 8.2\text{ ms}$ | $3.8 - 8.2\text{ ms}$ | $3.8 - 8.2\text{ ms}$ | **PASS** |
-| **Total DSP Peak Resident RAM** | $\le 700.0\text{ MB}$ | **629.6 MB** | 630.3 MB | 629.6 MB | **PASS** |
-| **Denoise Energy Attenuation** | $\ge 8.0\text{ dB}$ | **$-10.5\text{ to } -14.2\text{ dB}$** (diffuse fan / OR noise) | **PASS** |
+| **DeepFilterNet Latency (Mean)** | $< 500.0\text{ ms}$ | **448.97 ms** | **451.93 ms** | **453.36 ms** | **PASS** |
+| **DeepFilterNet Latency (P95)** | $< 500.0\text{ ms}$ | **458.35 ms** | **460.58 ms** | **463.23 ms** | **PASS** |
+| **Real-Time Factor (RTF)** | $\le 0.50$ | **0.4490** | **0.4519** | **0.4534** | **PASS** |
+| **DeepFilterNet Load Delta** | $< 50.0\text{ MB}$ | $+29.3\text{ MB}$ | $+29.3\text{ MB}$ | $+29.3\text{ MB}$ | **PASS** |
+| **Silero VAD Latency (per 32ms)** | $< 10.0\text{ ms}$ | $3.8 - 8.2\text{ ms}$ | $3.8 - 8.2\text{ ms}$ | $3.8 - 8.2\text{ ms}$ | **PASS** |
+| **Peak Resident RAM (DSP Proc)** | $< 700.0\text{ MB}$ | **629.6 MB** | **630.3 MB** | **629.6 MB** | **PASS** |
+| **Denoise Energy Attenuation** | $> 8.0\text{ dB}$ | **$-10.5\text{ to } -14.2\text{ dB}$** (diffuse noise) | **PASS** |
 
 *Note: On an x86_64 host (Intel i7/WSL2), DeepFilterNet achieves an RTF of 0.0485 (48.51 ms per 1.0s audio).*
 
@@ -24,9 +24,24 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 
 ## 2. Metric Evaluation & Key Takeaways
 
-* **RTF = 0.4490 ($\le 0.50$):** Processing 1.0 second of multi-channel audio takes only 449 ms. This leaves $> 55\%$ of CPU cycles free and guarantees zero audio buffer backlog during continuous live streaming.
-* **P95 Latency = 458.35 ms:** Worst-case latency jitter stays well below the 500 ms audio chunk boundary, preventing buffer underruns.
-* **VAD Temporal Voting:** Requiring $\ge 3$ consecutive active 32ms windows (approx. 100 ms) successfully filters transient surgical clicks (scalpel drops, tray clatter) without delaying speech onset.
+### What is RTF (Real-Time Factor)?
+$$\text{RTF} = \frac{\text{Processing Time}}{\text{Audio Duration}}$$
+* If $\text{RTF} = 1.0$, the processor takes exactly 1.0 second to process 1.0 second of audio.
+* If $\text{RTF} > 1.0$, the algorithm is slower than real time. In a live streaming system, this causes continuous buffer accumulation, audio latency buildup, and eventual memory exhaustion.
+* If $\text{RTF} < 0.50$ (our measured **0.4490** on Pi 4), the processor finishes 1.0 second of audio in less than 450 ms. This guarantees zero audio queue accumulation and leaves over 55% of the CPU core free for OS scheduling and I/O.
+
+### What is P95 Latency?
+* While *mean* latency measures average execution time, **P95 (95th percentile)** latency represents the upper bound experienced by 95% of audio chunks.
+* In surgical operating rooms, worst-case spikes (e.g. caused by memory garbage collection or thread contention) can cause missed commands. Our P95 latency on Pi 4 is **458.35 ms**, comfortably within our 500 ms chunk budget.
+
+### What is Delay-and-Sum Beamforming?
+* The Seeed ReSpeaker 8-mic array places 6 microphone capsules in a circle of radius $43\text{ mm}$ around a perimeter.
+* Sound arriving from a specific angle $\theta$ reaches closer microphones earlier than farther ones.
+* By applying calculated phase delays $\tau_m = -\frac{r \cos(\theta - \phi_m)}{c}$ to each channel and summing them together, the acoustic waves from the target angle interfere **constructively** (amplified), while ambient noise from other directions interferes **destructively** (cancelled).
+
+### What is VAD Window Voting?
+* Rather than making an utterance decision on a single momentary audio frame, the VAD evaluates a sliding window of multiple 32 ms frames.
+* **Window Voting** requires $\ge 3$ consecutive frames (approx. 100 ms) to exceed the speech probability threshold before declaring speech onset. This prevents transient surgical clicks (e.g., scalpel dropping, tray clatter, throat clearing) from falsely triggering ASR.
 
 ---
 

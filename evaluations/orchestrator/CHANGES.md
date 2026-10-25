@@ -29,3 +29,4 @@ This document logs all architectural and algorithmic modifications made to the O
   3. Increased NLU warmup timeout barrier to 120 seconds to prevent premature watchdog kill on WSL cross-filesystem mounts.
   4. Runs a 200 ms health check loop; auto-restarts dead services within 358 ms.
   5. Intercepts `SIGINT`/`SIGTERM` to perform clean shutdown in reverse dependency order.
+
