@@ -83,3 +83,47 @@ uv run python src/orchestrator/supervisor.py \
   * ASR Transcripts: Word tokens and confidences append to [`results/asr_transcripts.jsonl`](../results/asr_transcripts.jsonl).
   * NLU Envelopes: Validated command envelopes append to [`results/nlu_envelopes.jsonl`](../results/nlu_envelopes.jsonl).
   * Audio Verification: Inspect the 3 progressive WAV files in `results/dsp_debug/` with any media player or Audacity.
+
+---
+
+## 4. Subsystem Evaluations & Clinical Findings (by HerrCult69)
+
+Direct operational evaluation across all subsystems after live hardware execution on the complete, integrated pipeline:
+
+### 🔊 1. DSP Audio Subsystem
+* **Beamforming Reality:**
+  * In current WAV simulation trials, mono audio is duplicated across 8 channels. Because all mics receive identical waveforms ($\Delta \tau = 0$), the Delay-and-Sum beamformer produces an output identical to the raw input.
+  * *Next step:* True directional beamforming must be evaluated using physical 8-channel array capture (`arecord -c 8`) with spatial speaker offsets.
+* **Denoiser Acoustic Coloration (Underwhelming):**
+  * The DeepFilterNet neural denoiser output is currently underwhelming: static background noise is only moderately reduced, while the voice suffers from a "vacuum tube" coloration (flanging/comb filtering), fading in and out with subtle popping sounds (like speaking through a hollow pipe).
+  * *Technical cause:* Aggressive ERB subband neural gain masking on reverberant audio creates spectral gating artifacts.
+  * *Required fix:* Clamp maximum attenuation to a bounded floor (e.g., $-12\text{ dB}$ or $-15\text{ dB}$) and blend $20\%$ raw audio with $80\%$ denoised audio to preserve vocal timbre.
+* **Acoustic Silence Detection Limitation:**
+  * Ambient operating room noise (HVAC, suction, ventilator beeps) makes pure energy-based VAD silence detection difficult to control—risking either cutting off trailing words or introducing 400–800 ms of silence delay.
+
+### 🎙️ 2. ASR Speech Recognition
+* **Narrow Grammar vs. Phrasing Freedom:**
+  * The current grammar is too restrictive. Surgeons lack the freedom to use colloquial medical phrasing and synonyms that carry identical clinical intent (*"bring up"*, *"pull up"*, *"scroll"*, *"advance"*, *"freeze"*, *"hold on"*, *"closer"*).
+  * The grammar FST must be expanded by 30–50 medical synonyms. Because Kaldi uses an FST graph, this incurs **$< 10\text{ ms}$** of decoding overhead on the Pi 4 while granting surgeons full conversational freedom.
+* **Implementation of the Explicit "END" Keyword (Who Does It?):**
+  * **ASR (`src/asr/`) must implement this feature.**
+  * *Why DSP cannot do it:* Silero VAD only sees raw decibels and voice probability ($P(\text{speech})$); it has zero vocabulary or speech recognition capability.
+  * *Why NLU is too late:* NLU only receives text after ASR finishes; if ASR waited for silence, the latency penalty has already occurred.
+  * *ASR Implementation Blueprint:* Add `"end"` to `src/asr/vocab.py`. In the streaming audio loop, check `recognizer.PartialResult()`. The instant `"end"` is detected as the trailing word, ASR immediately flushes `FinalResult()`, strips the delimiter, and pushes the command to NLU over ZeroMQ. This slashes post-speech latency from $\sim 290\text{ ms}$ down to **$\mathbf{< 150\text{ ms}}$**.
+
+### 🧠 3. NLU Intent Engine
+* **Evaluation:** Working very well and reliably.
+* Intent classification (SetFit `bge-micro-v2`) and slot extraction reliably produce 100% valid Draft 2020-12 envelopes and correctly reject out-of-domain conversational chatter as `UNKNOWN`.
+* Thread profiling confirmed that **2 PyTorch threads** is the optimal operating point on ARM Cortex-A72 ($152.85\text{ ms}$, leaving 2 cores 100% free for DSP and ASR).
+
+### ⚡ 4. Orchestrator & Intraoperative Web Monitor
+* **Dispatcher & Watchdog:** ZeroMQ dual-channel priority routing and supervisor watchdog recovery ($358\text{ ms}$) are verified and robust.
+* **Monitor Capabilities Tested & Next Testing Priorities:**
+  * Viewport magnification (`zoom_display`) is tested and working properly.
+  * Testing now needs to expand across the remaining capabilities supported by the monitor:
+    1. **`navigate_slice`:** Relative stepping (*"advance 5 slices"*, *"previous slice"*) and direct jumping (*"jump to slice 45"*).
+    2. **`open_scan` / `close_scan`:** Modality switching between CT, MRI, and X-ray series.
+    3. **`log_event`:** EMR intraoperative milestone audit logging (*"record milestone trocar placed note clip attached"*).
+    4. **`pick_tool` / `park_arm`:** Robotic gripper holding telemetry (*"hand me the scalpel"*).
+    5. **`halt_emergency` / `clear_emergency`:** Brake-locking emergency stops and +Z vertical cavity evacuation.
+
