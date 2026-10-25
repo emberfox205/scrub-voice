@@ -1,8 +1,12 @@
-import onnxruntime as ort
-import torchaudio
-import torch
+from pathlib import Path
 import numpy as np
+import onnxruntime as ort
+import soundfile as sf
+import torch
+import torchaudio
 from torch import Tensor
+
+CURRENT_DIR = Path(__file__).resolve().parent
 
 def hz_to_erb(freq):
     return 21.4 * torch.log10(1.0 + 0.00437 * freq)
@@ -82,72 +86,113 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
 
     return final_spec
 
-# ---------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------
-ONNX_MODEL_PATH = "src/dsp/denoise/deepfilternet.onnx"
-INPUT_WAV = "src/dsp/denoise/audio/noise_audio.wav"
-OUTPUT_WAV = "src/dsp/denoise/audio/clean_audio.wav"
+class DeepFilterDenoiser:
+    """DeepFilterNet ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
 
-# Ensure PyTorch uses only 1 thread to prevent Raspberry Pi CPU thrashing
-torch.set_num_threads(1)
+    def __init__(
+        self,
+        model_path: Path | str | None = None,
+        sample_rate: int = 16000,
+        n_fft: int = 512,
+        hop_length: int = 128,
+        win_length: int = 512,
+        erb_bins: int = 32,
+        df_bins: int = 96,
+        threads: int = 1,
+    ):
+        if model_path is None:
+            model_path = CURRENT_DIR / "deepfilternet.onnx"
+        self.model_path = Path(model_path)
+        self.sample_rate = sample_rate
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.erb_bins = erb_bins
+        self.df_bins = df_bins
 
-# 1. Load ONNX Session (using CPU provider optimized for ARM)
-options = ort.SessionOptions()
-options.intra_op_num_threads = 1
-options.inter_op_num_threads = 1
-session = ort.InferenceSession(ONNX_MODEL_PATH, sess_options=options, providers=['CPUExecutionProvider'])
+        torch.set_num_threads(threads)
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = threads
+        options.inter_op_num_threads = threads
+        self.session = ort.InferenceSession(
+            str(self.model_path), sess_options=options, providers=["CPUExecutionProvider"]
+        )
 
-# 2. Setup DSP
-sample_rate = 16000
-n_fft = 512
-hop_length = 128
-win_length = 512
-erb_bins = 32
-df_bins = 96
+        self.window = torch.hann_window(self.win_length)
+        self.filterbank = make_erb_filterbank(
+            sample_rate=self.sample_rate, n_fft=self.n_fft, erb_bins=self.erb_bins
+        )
+        self.synthesis_matrix = erb_synthesis_matrix(self.filterbank)
 
-window = torch.hann_window(win_length)
-filterbank = make_erb_filterbank(sample_rate=sample_rate, n_fft=n_fft, erb_bins=erb_bins) # [32, 257]
-synthesis_matrix = erb_synthesis_matrix(filterbank) # [257, 32]
+    def enhance(self, audio: np.ndarray) -> np.ndarray:
+        """Enhance mono audio (1D float32 or [C, T]). Returns 1D float32 np.ndarray."""
+        orig_len = audio.shape[-1]
+        wav_t = torch.from_numpy(audio.astype(np.float32))
+        if wav_t.ndim == 1:
+            wav_t = wav_t.unsqueeze(0)
+        elif wav_t.shape[0] > 1:
+            wav_t = wav_t.mean(dim=0, keepdim=True)
 
-# 3. Load Audio
-noisy_wav, sr = torchaudio.load(INPUT_WAV)
-if sr != sample_rate:
-    noisy_wav = torchaudio.functional.resample(noisy_wav, orig_freq=sr, new_freq=sample_rate)
+        input_spec = torch.stft(
+            wav_t,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=self.window,
+            return_complex=True,
+        )
 
-if noisy_wav.shape[0] > 1:
-    noisy_wav = noisy_wav.mean(dim=0, keepdim=True)
+        input_erb = torch.matmul(input_spec.abs().square().transpose(1, 2), self.filterbank.T)
+        input_erb = torch.log10(input_erb + 1e-7).unsqueeze(1)
+        complex_raw = torch.view_as_real(input_spec[:, : self.df_bins, :]).permute(0, 3, 2, 1)
 
-# 4. Feature Extraction (STFT -> ERB & Complex)
-# STFT
-input_spec = torch.stft(noisy_wav, n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
+        inputs = {
+            "input_erb": input_erb.numpy().astype(np.float32),
+            "complex_in": complex_raw.numpy().astype(np.float32),
+        }
+        outputs = self.session.run(None, inputs)
 
-# ERB
-input_erb = torch.matmul(input_spec.abs().square().transpose(1, 2), filterbank.T)
-input_erb = torch.log10(input_erb + 1e-7).unsqueeze(1) # [1, 1, T, 32]
+        erb_gains = torch.from_numpy(outputs[0])
+        df_coefficients = torch.from_numpy(outputs[1])
+        alpha = torch.from_numpy(outputs[2])
 
-# Complex Input
-complex_raw = torch.view_as_real(input_spec[:, :df_bins, :]).permute(0, 3, 2, 1) # [1, 2, T, 96]
-# Note: Apply CausalEmaUnitNorm here if your model expects it:
-# complex_in = complex_ema_norm(complex_raw)
-complex_in = complex_raw # Assuming raw for demo
+        stage1_spec = apply_erb_gains(input_spec, erb_gains, self.synthesis_matrix)
+        final_spec = apply_deep_filter(
+            stage1_spec=stage1_spec,
+            coefficients=df_coefficients,
+            alpha=alpha,
+            df_bins=self.df_bins,
+            df_order=5,
+            lookahead=1,
+        )
+        enh_wav = torch.istft(
+            final_spec.transpose(1, 2),
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=self.window,
+            length=orig_len,
+        )
+        return enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
 
-# 5. Run ONNX Inference
-inputs = {
-    'input_erb': input_erb.numpy().astype(np.float32),
-    'complex_in': complex_in.numpy().astype(np.float32)
-}
-outputs = session.run(None, inputs)
 
-erb_gains = torch.from_numpy(outputs[0])
-df_coefficients = torch.from_numpy(outputs[1])
-alpha = torch.from_numpy(outputs[2])
+if __name__ == "__main__":
+    # ---------------------------------------------------------
+    # Standalone Demo / Benchmark
+    # ---------------------------------------------------------
+    ONNX_MODEL_PATH = str(CURRENT_DIR / "deepfilternet.onnx")
+    INPUT_WAV = str(CURRENT_DIR / "audio" / "noise_audio.wav")
+    OUTPUT_WAV = str(CURRENT_DIR / "audio" / "clean_audio.wav")
 
-# 6. Apply Filter & Inverse STFT
-stage1_spec = apply_erb_gains(input_spec, erb_gains, synthesis_matrix)
-final_spec = apply_deep_filter(stage1_spec=stage1_spec, coefficients=df_coefficients, alpha=alpha, df_bins=df_bins, df_order=5, lookahead=1)
-enh_wav = torch.istft(final_spec.transpose(1, 2), n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window)
+    denoiser = DeepFilterDenoiser(model_path=ONNX_MODEL_PATH)
+    audio_data, sr = sf.read(INPUT_WAV, dtype="float32")
+    if audio_data.ndim > 1:
+        audio_data = audio_data.mean(axis=1)
 
-# 7. Save
-torchaudio.save(OUTPUT_WAV, enh_wav, sample_rate)
-print(f"Saved enhanced audio to {OUTPUT_WAV}")
+    if sr != 16000:
+        noisy_t = torchaudio.functional.resample(torch.from_numpy(audio_data), orig_freq=sr, new_freq=16000)
+        audio_data = noisy_t.numpy()
+
+    out_audio = denoiser.enhance(audio_data)
+    sf.write(OUTPUT_WAV, out_audio, 16000)
+    print(f"Saved enhanced audio to {OUTPUT_WAV}")
