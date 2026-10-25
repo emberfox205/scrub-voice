@@ -269,7 +269,7 @@ class Supervisor:
             spec = self.services[name]
             self.start_service(spec)
             if wait_for_warmup:
-                timeout = 75.0 if name == "NLU" else 20.0
+                timeout = 120.0 if name == "NLU" else 25.0
                 ready = self.wait_for_ready(name, timeout=timeout)
                 if not ready:
                     self._log("SUPERVISOR", f"Timed out waiting for {name} warmup ({timeout}s)", level="WARN")
