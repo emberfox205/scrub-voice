@@ -58,3 +58,21 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 * If a surgeon says *"zoom in twice"* and subsequently follows with *"do it again"* or *"undo that"*, a stateless parser cannot resolve the target parameter.
 * **Recommendation:** Integrate an optional query to the Orchestrator's Last-Value-Cache (LVC) via `ipc:///tmp/scrub_snapshot.ipc` to resolve contextual pronouns and relative adjustments.
 
+---
+
+## 4. Model Weights Download (`model.safetensors`)
+
+Because `*.safetensors` files are excluded from Git via `.gitignore` (~69.5 MB), team members setting up a fresh environment must download the fine-tuned SetFit transformer checkpoint after running `uv sync`:
+
+* **Google Drive Link:** [model.safetensors](https://drive.google.com/file/d/1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn/view?usp=drive_link)
+* **File ID:** `1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn`
+* **Destination Path:** `src/nlu/models/setfit_bge-micro-v2_8k/model.safetensors`
+
+```bash
+# 1. Synchronize Python environment
+uv sync
+
+# 2. Download weights directly using uvx (or pip install gdown):
+uvx gdown 1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn -O src/nlu/models/setfit_bge-micro-v2_8k/model.safetensors
+```
+

@@ -58,6 +58,15 @@ flowchart LR
 
 ## 4. Operational CLI Commands Quick Reference
 
+### Environment Setup & Model Weights (Prerequisites)
+```bash
+# 1. Sync dependencies from pyproject.toml / uv.lock
+uv sync
+
+# 2. Download SetFit weights (model.safetensors) via gdown into NLU model directory
+uvx gdown 1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn -O src/nlu/models/setfit_bge-micro-v2_8k/model.safetensors
+```
+
 ### Launch Full Live Pipeline (Hardware ReSpeaker Array)
 ```bash
 uv run python src/orchestrator/supervisor.py

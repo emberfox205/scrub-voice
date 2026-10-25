@@ -34,7 +34,34 @@ Each module folder contains:
 
 ---
 
-## 3. How to Run Edge Tests & Benchmarks
+## 3. Environment Setup & Model Weights (Prerequisites)
+
+Because model checkpoints (`*.safetensors`) are heavy binary files (~69.5 MB), they are excluded from Git via `.gitignore`. Team members setting up a new checkout or pulling updates must synchronize dependencies and download the NLU weights before executing benchmarks or starting the supervisor:
+
+### Step 1: Synchronize Virtual Environment
+```bash
+# Resolves and installs pinned dependencies from pyproject.toml / uv.lock
+uv sync
+```
+
+### Step 2: Download NLU Transformer Weights (`model.safetensors`)
+Download the fine-tuned SetFit transformer checkpoint directly into `src/nlu/models/setfit_bge-micro-v2_8k/`:
+
+* **Google Drive URL:** [model.safetensors](https://drive.google.com/file/d/1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn/view?usp=drive_link)
+* **File ID:** `1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn`
+
+```bash
+# Using uvx (runs gdown in an isolated temporary tool environment):
+uvx gdown 1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn -O src/nlu/models/setfit_bge-micro-v2_8k/model.safetensors
+
+# Alternatively using standard pip / gdown:
+pip install gdown
+gdown 1nvYNYkfLq-hNlU9LnwKtE8j2GsXd3fVn -O src/nlu/models/setfit_bge-micro-v2_8k/model.safetensors
+```
+
+---
+
+## 4. How to Run Edge Tests & Benchmarks
 
 The test suite provides two complementary testing workflows:
 
@@ -86,7 +113,7 @@ uv run python src/orchestrator/supervisor.py \
 
 ---
 
-## 4. Subsystem Evaluations & Clinical Findings (by HerrCult69)
+## 5. Subsystem Evaluations & Clinical Findings (by HerrCult69)
 
 Direct operational evaluation across all subsystems after live hardware execution on the complete, integrated pipeline:
 
