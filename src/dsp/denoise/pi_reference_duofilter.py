@@ -1,13 +1,28 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Union
+
 import numpy as np
 import onnxruntime as ort
 import torch
 import torchaudio
 from torch import Tensor
 
+CURRENT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CURRENT_DIR.parents[2]
+
+
 # ---------------------------------------------------------
 # STFT & iSTFT Helper Functions (Square-Root Hann COLA)
 # ---------------------------------------------------------
-def wav_to_stft(wav: Tensor, n_fft: int = 512, hop_length: int = 256, win_length: int = 512, window: Tensor = None) -> Tensor:
+def wav_to_stft(
+    wav: Tensor,
+    n_fft: int = 512,
+    hop_length: int = 256,
+    win_length: int = 512,
+    window: Optional[Tensor] = None,
+) -> Tensor:
     """
     Transforms audio waveform to STFT representation.
     Returns: Tensor of shape [B, 2, T, 257] (Real, Imag)
@@ -23,14 +38,21 @@ def wav_to_stft(wav: Tensor, n_fft: int = 512, hop_length: int = 256, win_length
         win_length=win_length,
         window=window,
         center=True,
-        return_complex=True
+        return_complex=True,
     )
     # Transpose to [B, T, F] then stack real and imag -> [B, 2, T, F]
     spec = spec.transpose(-1, -2)
     return torch.stack([spec.real, spec.imag], dim=1)
 
 
-def stft_to_wav(enhanced_stft: Tensor, n_fft: int = 512, hop_length: int = 256, win_length: int = 512, window: Tensor = None, length: int = None) -> Tensor:
+def stft_to_wav(
+    enhanced_stft: Tensor,
+    n_fft: int = 512,
+    hop_length: int = 256,
+    win_length: int = 512,
+    window: Optional[Tensor] = None,
+    length: Optional[int] = None,
+) -> Tensor:
     """
     Reconstructs audio waveform from enhanced STFT [B, 2, T, 257].
     Returns: Tensor of shape [B, Audio_Samples]
@@ -49,70 +71,102 @@ def stft_to_wav(enhanced_stft: Tensor, n_fft: int = 512, hop_length: int = 256, 
         win_length=win_length,
         window=window.float(),
         center=True,
-        length=length
+        length=length,
     )
 
 
 # ---------------------------------------------------------
-# Configuration
+# DuoFilter Denoiser Class
 # ---------------------------------------------------------
-ONNX_MODEL_PATH = "src/dsp/denoise/onnx/duofilter.onnx"
-INPUT_WAV = "src/dsp/denoise/audio/noise_audio.wav"
-OUTPUT_WAV = "src/dsp/denoise/audio/clean_audio.wav"
+class DuoFilterDenoiser:
+    """DuoFilter ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
 
-# DuoFilter Audio & STFT Parameters
-SAMPLE_RATE = 16000
-N_FFT = 512
-HOP_LENGTH = 256    # 16 ms hop (50% overlap)
-WIN_LENGTH = 512
+    DEFAULT_ONNX_PATH = CURRENT_DIR / "onnx" / "duofilter.onnx"
 
-# Prevent CPU thrashing on Raspberry Pi
-torch.set_num_threads(1)
+    def __init__(
+        self,
+        model_path: Optional[Union[Path, str]] = None,
+        sample_rate: int = 16000,
+        n_fft: int = 512,
+        hop_length: int = 256,
+        win_length: int = 512,
+        threads: int = 1,
+    ):
+        if model_path is None:
+            model_path = self.DEFAULT_ONNX_PATH
+        self.model_path = Path(model_path).resolve()
+        self.sample_rate = sample_rate
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
 
-# 1. Load ONNX Session (configured for ARM Cortex-A CPU)
-session_options = ort.SessionOptions()
-session_options.intra_op_num_threads = 1
-session_options.inter_op_num_threads = 1
-session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        if not self.model_path.exists():
+            raise FileNotFoundError(f"DuoFilter ONNX model not found at {self.model_path}")
 
-session = ort.InferenceSession(ONNX_MODEL_PATH, sess_options=session_options, providers=['CPUExecutionProvider'])
-input_name = session.get_inputs()[0].name
-output_name = session.get_outputs()[0].name
+        torch.set_num_threads(threads)
+        session_options = ort.SessionOptions()
+        session_options.intra_op_num_threads = threads
+        session_options.inter_op_num_threads = threads
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-# 2. Square-Root Hann Window for analysis & synthesis
-window = torch.hann_window(WIN_LENGTH).pow(0.5)
+        self.session = ort.InferenceSession(
+            str(self.model_path), sess_options=session_options, providers=["CPUExecutionProvider"]
+        )
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
 
-# 3. Load & Preprocess Audio
-noisy_wav, sr = torchaudio.load(INPUT_WAV)
-if sr != SAMPLE_RATE:
-    noisy_wav = torchaudio.functional.resample(noisy_wav, orig_freq=sr, new_freq=SAMPLE_RATE)
+        self.window = torch.hann_window(self.win_length).pow(0.5)
 
-if noisy_wav.shape[0] > 1:
-    noisy_wav = noisy_wav.mean(dim=0, keepdim=True)
+    def enhance(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Enhance mono audio (1D float32 or [C, T]).
+        Returns 1D float32 np.ndarray matching the input audio length.
+        """
+        orig_len = audio.shape[-1]
+        wav_t = torch.from_numpy(audio.astype(np.float32))
+        if wav_t.ndim == 1:
+            wav_t = wav_t.unsqueeze(0)
+        elif wav_t.shape[0] > 1:
+            wav_t = wav_t.mean(dim=0, keepdim=True)
 
-orig_length = noisy_wav.shape[-1]
+        noisy_stft = wav_to_stft(
+            wav_t,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=self.window,
+        )
 
-# 4. Feature Extraction: Causal STFT -> [1, 2, T, 257]
-# Channel 0: Yr (Real), Channel 1: Yi (Imag)
-noisy_stft = wav_to_stft(noisy_wav, n_fft=N_FFT, hop_length=HOP_LENGTH, win_length=WIN_LENGTH, window=window)
+        ort_inputs = {self.input_name: noisy_stft.numpy().astype(np.float32)}
+        ort_outputs = self.session.run([self.output_name], ort_inputs)
+        enhanced_stft = torch.from_numpy(ort_outputs[0])
 
-# 5. Run DuoFilter ONNX Inference
-# All ERB Band Merging (BM), SFE, U-Net processing, Amplified CRM, and Band Splitting (BS) run inside the model
-ort_inputs = {input_name: noisy_stft.numpy().astype(np.float32)}
-ort_outputs = session.run([output_name], ort_inputs)
+        enh_wav = stft_to_wav(
+            enhanced_stft,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=self.window,
+            length=orig_len,
+        )
+        return enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
 
-enhanced_stft = torch.from_numpy(ort_outputs[0])  # [1, 2, T, 257]
 
-# 6. Reconstruct Time-Domain Waveform via iSTFT
-enh_wav = stft_to_wav(
-    enhanced_stft,
-    n_fft=N_FFT,
-    hop_length=HOP_LENGTH,
-    win_length=WIN_LENGTH,
-    window=window,
-    length=orig_length
-)
+# ---------------------------------------------------------
+# Standalone CLI / Verification
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    input_wav = CURRENT_DIR / "audio" / "noise_audio.wav"
+    output_wav = CURRENT_DIR / "audio" / "clean_audio.wav"
+    if not input_wav.exists():
+        input_wav = REPO_ROOT / "data" / "asr" / "sample_01.wav"
 
-# 7. Save Enhanced Output
-torchaudio.save(OUTPUT_WAV, enh_wav, SAMPLE_RATE)
-print(f"Saved enhanced audio to {OUTPUT_WAV}")
+    print(f"Running DuoFilterDenoiser on {input_wav}...")
+    denoiser = DuoFilterDenoiser()
+    noisy_wav, sr = torchaudio.load(str(input_wav))
+    if sr != denoiser.sample_rate:
+        noisy_wav = torchaudio.functional.resample(noisy_wav, orig_freq=sr, new_freq=denoiser.sample_rate)
+
+    enhanced = denoiser.enhance(noisy_wav.squeeze(0).numpy())
+    torchaudio.save(str(output_wav), torch.from_numpy(enhanced).unsqueeze(0), denoiser.sample_rate)
+    print(f"Saved enhanced audio to {output_wav}")

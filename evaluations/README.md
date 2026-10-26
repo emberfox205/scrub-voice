@@ -69,14 +69,18 @@ The test suite provides two complementary testing workflows:
 Profiles isolated module performance (latency, RAM, Real-Time Factor, and thread scaling) without launching background daemons.
 
 ```bash
-# Recommended baseline: 2 threads on Raspberry Pi 4 (without pinning)
+# Recommended baseline: 2 threads on Raspberry Pi 4 with DuoFilter (default)
 uv run python test/benchmark_edge_profile.py --threads 2 --no-pin
 
-# Benchmark denoiser using any custom audio file (interchangeable WAV path)
+# Benchmark DuoFilter using custom audio file
 uv run python test/benchmark_edge_profile.py --threads 2 --no-pin --wav data/asr/test_mix_voice.wav
+
+# Benchmark DeepFilterNet using custom audio file
+uv run python test/benchmark_edge_profile.py --threads 2 --no-pin --denoiser-type deepfilter --wav data/asr/test_mix_voice.wav
 ```
 
 * **CLI Options:**
+  * `--denoiser-type <duofilter|deepfilter>`: Selects neural denoiser model: `duofilter` (default) or `deepfilter`.
   * `--threads 2`: Allocates 2 PyTorch/ONNX worker threads (empirically proven optimal for Cortex-A72).
   * `--no-pin`: Disables physical core 0 affinity pinning (recommended when testing alongside other workloads).
   * `--wav <PATH>`: **Interchangeable WAV file path.** Loads any custom audio file to calculate real-world RTF on actual acoustic data instead of default noise audio.
@@ -96,6 +100,18 @@ uv run python src/orchestrator/supervisor.py \
   --wav data/asr/test_mix_voice.wav \
   --single-pass \
   --dump-audio results/dsp_debug
+
+# 1. Run live pipeline simulation with DuoFilter (default)
+uv run python src/orchestrator/supervisor.py --wav data/asr/test_mix_voice.wav --single-pass
+
+# 2. Run live pipeline simulation with DeepFilterNet
+uv run python src/orchestrator/supervisor.py --wav data/asr/test_mix_voice.wav --single-pass --denoiser-type deepfilter
+
+# 3. Run DSP standalone with DuoFilter
+uv run python src/dsp/run_dsp.py --wav data/asr/sample_01.wav --denoiser-type duofilter
+
+# 4. Run DSP standalone with DeepFilterNet
+uv run python src/dsp/run_dsp.py --wav data/asr/sample_01.wav --denoiser-type deepfilter
 ```
 
 * **CLI Options:**

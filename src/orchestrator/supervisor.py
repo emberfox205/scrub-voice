@@ -5,7 +5,7 @@ the decoupled Scrub-Voice microservices:
   [MONITOR] : CommandDispatcher + FastAPI WebSocket Dashboard (src/orchestrator/run_monitor_service.py)
   [NLU]     : SetFit + Slot Extractor Daemon (src/nlu/run_nlu.py)
   [ASR]     : UtteranceStream Vosk / Faster-Whisper Engine (src/asr/scripts/run_asr.py)
-  [DSP]     : AudioStreamer + VAD + SRP-PHAT + DAS + DeepFilterNet (src/dsp/run_dsp.py)
+  [DSP]     : AudioStreamer + VAD + SRP-PHAT + DAS + AI Denoiser (DuoFilter/DeepFilterNet) (src/dsp/run_dsp.py)
 
 Key Invariants:
 1. Pinned Process Specs: Each service runs as an isolated OS process.
@@ -83,6 +83,7 @@ class Supervisor:
         max_restarts: int = 5,
         single_pass: bool = False,
         dsp_denoise: bool = True,
+        denoiser_type: str = "duofilter",
         dsp_spatial: bool = True,
         nlu_threads: int = 2,
         dump_audio: Optional[Path] = None,
@@ -95,6 +96,7 @@ class Supervisor:
         self.max_restarts = max_restarts
         self.single_pass = single_pass
         self.dsp_denoise = dsp_denoise
+        self.denoiser_type = denoiser_type
         self.dsp_spatial = dsp_spatial
         self.nlu_threads = nlu_threads
         self.dump_audio = dump_audio
@@ -161,6 +163,8 @@ class Supervisor:
 
             if not self.dsp_denoise:
                 dsp_cmd.append("--no-denoise")
+            else:
+                dsp_cmd.extend(["--denoiser-type", self.denoiser_type])
             if not self.dsp_spatial:
                 dsp_cmd.append("--no-spatial")
             if self.dump_audio:
@@ -376,7 +380,13 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Monitor Web Host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Monitor Web Port (default: 8000)")
     parser.add_argument("--no-dsp", action="store_true", help="Start without DSP service")
-    parser.add_argument("--no-denoise", action="store_true", help="Bypass DeepFilterNet denoiser in DSP")
+    parser.add_argument(
+        "--denoiser-type",
+        choices=["duofilter", "deepfilter"],
+        default="duofilter",
+        help="Select denoiser model for DSP: 'duofilter' (default) or 'deepfilter'",
+    )
+    parser.add_argument("--no-denoise", action="store_true", help="Bypass denoiser in DSP")
     parser.add_argument("--no-spatial", action="store_true", help="Bypass spatial localizer/beamformer in DSP")
     parser.add_argument("--nlu-threads", type=int, default=2, help="PyTorch CPU threads for NLU (default: 2)")
     parser.add_argument("--single-pass", action="store_true", help="Stop pipeline after one pass of the WAV file")
@@ -393,6 +403,7 @@ def main():
         max_restarts=args.max_restarts,
         single_pass=args.single_pass,
         dsp_denoise=not args.no_denoise,
+        denoiser_type=args.denoiser_type,
         dsp_spatial=not args.no_spatial,
         nlu_threads=args.nlu_threads,
         dump_audio=args.dump_audio,

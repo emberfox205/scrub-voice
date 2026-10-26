@@ -33,6 +33,7 @@ if str(REPO_ROOT / "src" / "dsp") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src" / "dsp"))
 
 from dsp.denoise.pi_inference import DeepFilterDenoiser
+from dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
 from dsp.source.audio_streamer import AudioStreamer
 from dsp.source.beamformer import DASBeamformer
 from dsp.source.localizer import SRPLocalizer
@@ -72,6 +73,7 @@ def run_dsp_service(
     wav_path: Optional[Path] = None,
     device: str = "plughw:seeed8micvoicec,0",
     use_denoiser: bool = True,
+    denoiser_type: str = "duofilter",
     use_spatial: bool = True,
     vad_threshold: float = 0.5,
     realtime: bool = True,
@@ -98,11 +100,23 @@ def run_dsp_service(
 
     denoiser = None
     if use_denoiser:
-        denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
-        denoiser = DeepFilterDenoiser(model_path=denoiser_model, threads=1)
-        # Warmup denoiser
-        _ = denoiser.enhance(dummy_multichannel[0])
-        logger.info("DeepFilterNet ONNX denoiser initialized.")
+        dtype = denoiser_type.lower()
+        if dtype == "duofilter":
+            denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
+            denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1)
+            # Warmup denoiser
+            _ = denoiser.enhance(dummy_multichannel[0])
+            logger.info("DuoFilter ONNX denoiser initialized.")
+        elif dtype == "deepfilter":
+            denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "deepfilternet.onnx"
+            if not denoiser_model.exists():
+                denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
+            denoiser = DeepFilterDenoiser(model_path=denoiser_model, threads=1)
+            # Warmup denoiser
+            _ = denoiser.enhance(dummy_multichannel[0])
+            logger.info("DeepFilterNet ONNX denoiser initialized.")
+        else:
+            raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'deepfilter'")
 
     context, push = connect_push_socket(audio_addr)
 
@@ -264,7 +278,13 @@ def main() -> None:
     parser.add_argument("--wav", type=Path, default=None, help="Simulate audio stream from WAV file")
     parser.add_argument("--device", type=str, default="plughw:seeed8micvoicec,0", help="ALSA device name")
     parser.add_argument("--audio-addr", type=str, default=DEFAULT_AUDIO_ADDR, help="ZeroMQ audio address")
-    parser.add_argument("--no-denoise", dest="denoise", action="store_false", help="Bypass DeepFilterNet denoiser")
+    parser.add_argument(
+        "--denoiser-type",
+        choices=["duofilter", "deepfilter"],
+        default="duofilter",
+        help="Select denoiser model: 'duofilter' (default) or 'deepfilter'",
+    )
+    parser.add_argument("--no-denoise", dest="denoise", action="store_false", help="Bypass AI neural denoiser")
     parser.add_argument("--no-spatial", dest="spatial", action="store_false", help="Bypass localizer and beamformer")
     parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD threshold")
     parser.add_argument("--fast", dest="realtime", action="store_false", help="Simulate faster than real time")
@@ -278,6 +298,7 @@ def main() -> None:
         wav_path=args.wav,
         device=args.device,
         use_denoiser=args.denoise,
+        denoiser_type=args.denoiser_type,
         use_spatial=args.spatial,
         vad_threshold=args.vad_threshold,
         realtime=args.realtime,

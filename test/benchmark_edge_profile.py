@@ -3,7 +3,7 @@
 Comprehensive Edge Benchmarking & Resource Profiler for Raspberry Pi 4 (ARM64).
 
 Evaluates:
-  1. DSP AI Denoiser (DuoFilter ONNX)
+  1. DSP AI Denoiser (DuoFilter ONNX or DeepFilterNet ONNX)
   2. NLU Edge Pipeline (Lexical Normalizer + Single-Pass SetFit + Slot Extractor)
   3. Orchestrator ZeroMQ Dispatcher & LVC Snapshot Bus
   4. Full Pipeline CPU, RAM, Latency, and Real-Time Factor (RTF)
@@ -47,10 +47,10 @@ from src.nlu.pipeline import VoiceToIntentPipeline
 
 # Target Budgets for Raspberry Pi 4 Model B (4-core Cortex-A72 @ 1.5GHz, 4GB RAM)
 PI4_BUDGETS = {
-    "denoise_rtf_max": 0.50,         # Denoiser RTF must be <= 0.50
-    "nlu_latency_p95_ms": 100.0,     # NLU p95 latency must be <= 100ms
-    "nlu_ram_peak_mb": 800.0,        # NLU peak RAM <= 800MB
-    "dispatcher_latency_p95_ms": 5.0,# Dispatcher socket latency <= 5ms
+    "denoise_rtf_max": 0.50,          # Denoiser RTF must be <= 0.50
+    "nlu_latency_p95_ms": 100.0,      # NLU p95 latency must be <= 100ms
+    "nlu_ram_peak_mb": 800.0,         # NLU peak RAM <= 800MB
+    "dispatcher_latency_p95_ms": 5.0, # Dispatcher socket latency <= 5ms
 }
 
 
@@ -61,16 +61,52 @@ def get_process_memory_mb() -> float:
     return psutil.Process(os.getpid()).memory_info().rss / (1024.0 * 1024.0)
 
 
+def wav_to_stft(
+    wav: torch.Tensor,
+    n_fft: int = 512,
+    hop_length: int = 256,
+    win_length: int = 512,
+    window: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Transforms audio waveform to STFT representation [B, 2, T, 257] (Real, Imag)."""
+    if window is None:
+        window = torch.hann_window(win_length, device=wav.device).pow(0.5)
+
+    spec = torch.stft(
+        wav,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        window=window,
+        center=True,
+        return_complex=True,
+    )
+    spec = spec.transpose(-1, -2)
+    return torch.stack([spec.real, spec.imag], dim=1)
+
+
 # ---------------------------------------------------------------------------
-# 1. Benchmark: DeepFilterNet ONNX Denoiser
+# 1. Benchmark: DSP AI Denoiser (DuoFilter or DeepFilterNet)
 # ---------------------------------------------------------------------------
-def benchmark_denoiser(wav_path: Optional[str] = None, iterations: int = 5) -> Dict[str, Any]:
+def benchmark_denoiser(
+    wav_path: Optional[str] = None,
+    iterations: int = 5,
+    denoiser_type: str = "duofilter",
+) -> Dict[str, Any]:
+    dtype = denoiser_type.lower()
+    label = "DuoFilter ONNX" if dtype == "duofilter" else "DeepFilterNet ONNX"
+
     print("\n" + "=" * 70)
-    print(" [1/3] PROFILING DSP AI DENOISER (DeepFilterNet ONNX)")
+    print(f" [1/3] PROFILING DSP AI DENOISER ({label})")
     print("=" * 70)
 
-    model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
-    
+    if dtype == "duofilter":
+        model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
+    else:
+        model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "deepfilternet.onnx"
+        if not model_path.exists():
+            model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
+
     if wav_path:
         test_wav = Path(wav_path).resolve()
     else:
@@ -79,11 +115,10 @@ def benchmark_denoiser(wav_path: Optional[str] = None, iterations: int = 5) -> D
             test_wav = REPO_ROOT / "data" / "asr" / "sample_01.wav"
 
     if not model_path.exists() or not test_wav.exists():
-        print(f"  [!] Warning: DeepFilterNet model or test audio not found (checked {test_wav}). Skipping.")
-        return {"status": "SKIPPED"}
+        print(f"  [!] Warning: Denoiser model ({model_path.name}) or test audio not found (checked {test_wav}). Skipping.")
+        return {"status": "SKIPPED", "denoiser_type": dtype}
 
     print(f"  Profiling Audio Source: {test_wav.name}")
-    proc = psutil.Process(os.getpid()) if psutil else None
     ram_init_mb = get_process_memory_mb()
 
     # Load audio
@@ -97,25 +132,44 @@ def benchmark_denoiser(wav_path: Optional[str] = None, iterations: int = 5) -> D
     options = ort.SessionOptions()
     options.intra_op_num_threads = 1
     options.inter_op_num_threads = 1
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     session = ort.InferenceSession(str(model_path), sess_options=options, providers=["CPUExecutionProvider"])
     load_time_s = time.perf_counter() - t_load_start
     ram_load_mb = get_process_memory_mb()
 
-    # Dummy inputs matching DeepFilterNet shape [1, 1, T, 32] and [1, 2, T, 96]
-    # For a 1.0s audio chunk at hop=128, T ~ 125 frames
-    T = int((sr * min(1.0, audio_duration_s)) / 128)
-    dummy_erb = np.random.randn(1, 1, T, 32).astype(np.float32)
-    dummy_complex = np.random.randn(1, 2, T, 96).astype(np.float32)
+    chunk_dur_s = min(1.0, audio_duration_s)
+
+    if dtype == "duofilter":
+        input_name = session.get_inputs()[0].name
+        try:
+            wav_tensor = torch.from_numpy(data)
+            if sr != 16000:
+                import torchaudio
+                wav_tensor = torchaudio.functional.resample(wav_tensor.unsqueeze(0), orig_freq=sr, new_freq=16000).squeeze(0)
+                sr = 16000
+                chunk_dur_s = min(1.0, len(wav_tensor) / float(sr))
+            chunk_samples = int(sr * chunk_dur_s)
+            chunk_wav = wav_tensor[:chunk_samples].unsqueeze(0)
+            window = torch.hann_window(512).pow(0.5)
+            stft_input = wav_to_stft(chunk_wav, n_fft=512, hop_length=256, win_length=512, window=window).numpy().astype(np.float32)
+        except Exception:
+            T = max(1, int((16000 * chunk_dur_s) / 256))
+            stft_input = np.random.randn(1, 2, T, 257).astype(np.float32)
+        feed_dict = {input_name: stft_input}
+    else:
+        # DeepFilterNet input tensor signature [1, 1, T, 32] and [1, 2, T, 96]
+        T = max(1, int((sr * chunk_dur_s) / 128))
+        dummy_erb = np.random.randn(1, 1, T, 32).astype(np.float32)
+        dummy_complex = np.random.randn(1, 2, T, 96).astype(np.float32)
+        feed_dict = {"input_erb": dummy_erb, "complex_in": dummy_complex}
 
     # Warmup
-    session.run(None, {"input_erb": dummy_erb, "complex_in": dummy_complex})
+    session.run(None, feed_dict)
 
     latencies_ms = []
-    chunk_dur_s = 1.0
-
     for _ in range(iterations):
         t0 = time.perf_counter()
-        session.run(None, {"input_erb": dummy_erb, "complex_in": dummy_complex})
+        session.run(None, feed_dict)
         latencies_ms.append((time.perf_counter() - t0) * 1000.0)
 
     ram_peak_mb = get_process_memory_mb()
@@ -130,6 +184,7 @@ def benchmark_denoiser(wav_path: Optional[str] = None, iterations: int = 5) -> D
 
     return {
         "status": "PASS" if rtf <= PI4_BUDGETS["denoise_rtf_max"] else "FAIL",
+        "denoiser_type": dtype,
         "load_time_s": round(load_time_s, 2),
         "mean_latency_ms": round(mean_lat_ms, 2),
         "p95_latency_ms": round(p95_lat_ms, 2),
@@ -329,11 +384,18 @@ def main():
     parser.add_argument("--threads", type=int, default=1, help="PyTorch CPU worker threads (default: 1 for Pi 4)")
     parser.add_argument("--no-pin", action="store_true", help="Do not pin process to Core 0")
     parser.add_argument("--wav", type=str, default=None, help="Path to custom WAV file for denoiser profiling")
+    parser.add_argument(
+        "--denoiser-type",
+        choices=["duofilter", "deepfilter"],
+        default="duofilter",
+        help="Select denoiser model: 'duofilter' (default) or 'deepfilter'",
+    )
     args = parser.parse_args()
 
     print("*" * 70)
     print(" SCRUB-VOICE: RASPBERRY PI 4 EDGE VALIDATION & RESOURCE PROFILE")
     print(f" Host: {platform.platform()} | Python: {platform.python_version()}")
+    print(f" Denoiser Engine: {args.denoiser_type.upper()}")
     print(f" Emulation Mode: PyTorch Threads = {args.threads} | Core Pinning = {not args.no_pin}")
     if args.wav:
         print(f" Custom Audio Input: {args.wav}")
@@ -345,11 +407,16 @@ def main():
         "python_version": platform.python_version(),
         "torch_threads": args.threads,
         "core_pinned": not args.no_pin,
+        "denoiser_type": args.denoiser_type,
         "modules": {},
     }
 
     # 1. Denoiser
-    report["modules"]["dsp_denoiser"] = benchmark_denoiser(wav_path=args.wav, iterations=args.iterations)
+    report["modules"]["dsp_denoiser"] = benchmark_denoiser(
+        wav_path=args.wav,
+        iterations=args.iterations,
+        denoiser_type=args.denoiser_type,
+    )
 
     # 2. NLU
     report["modules"]["nlu_pipeline"] = benchmark_nlu(
@@ -379,7 +446,8 @@ def main():
     o_res = report["modules"]["orchestrator"]
 
     if d_res.get("status") != "SKIPPED":
-        print(f"{'DSP DeepFilterNet ONNX':<25} | {d_res['status']:<7} | {d_res['mean_latency_ms']:>8.2f} ms   | {d_res['p95_latency_ms']:>7.2f} ms   | {d_res['ram_peak_mb']:>6.1f} MB (RTF: {d_res['rtf']})")
+        denoiser_label = "DSP DuoFilter ONNX" if d_res.get("denoiser_type") == "duofilter" else "DSP DeepFilterNet ONNX"
+        print(f"{denoiser_label:<25} | {d_res['status']:<7} | {d_res['mean_latency_ms']:>8.2f} ms   | {d_res['p95_latency_ms']:>7.2f} ms   | {d_res['ram_peak_mb']:>6.1f} MB (RTF: {d_res['rtf']})")
     print(f"{'NLU Edge Pipeline':<25} | {n_res['status']:<7} | {n_res['mean_latency_ms']:>8.2f} ms   | {n_res['p95_latency_ms']:>7.2f} ms   | {n_res['ram_peak_mb']:>6.1f} MB")
     print(f"{'Orchestrator ZeroMQ':<25} | {o_res['status']:<7} | {o_res['mean_latency_ms']:>8.2f} ms   | {o_res['p95_latency_ms']:>7.2f} ms   | N/A")
     print("=" * 70)

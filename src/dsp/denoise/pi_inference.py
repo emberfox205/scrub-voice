@@ -86,6 +86,16 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
 
     return final_spec
 
+
+try:
+    from src.dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
+except ImportError:
+    try:
+        from dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
+    except ImportError:
+        DuoFilterDenoiser = None  # type: ignore
+
+
 class DeepFilterDenoiser:
     """DeepFilterNet ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
     # ---------------------------------------------------------
@@ -106,7 +116,8 @@ class DeepFilterDenoiser:
         threads: int = 1,
     ):
         if model_path is None:
-            model_path = CURRENT_DIR / "deepfilternet.onnx"
+            onnx_sub = CURRENT_DIR / "onnx" / "deepfilternet.onnx"
+            model_path = onnx_sub if onnx_sub.exists() else CURRENT_DIR / "deepfilternet.onnx"
         self.model_path = Path(model_path)
         self.sample_rate = sample_rate
         self.n_fft = n_fft
