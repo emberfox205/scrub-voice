@@ -1,7 +1,7 @@
 """End-to-End Voice Pipeline Stream Integration Test.
 
 Tests the complete physical and logical pipeline:
-[WAV File] -> [DSP: AudioStreamer + Silero VAD + DeepFilterNet]
+[WAV File] -> [DSP: AudioStreamer + Silero VAD + DuoFilter]
            -> [ASR: UtteranceStream + Vosk Engine]
            -> [NLU: VoiceToIntentPipeline + SetFit + Normalizer]
            -> [Orchestrator: CommandDispatcher LVC Cache]

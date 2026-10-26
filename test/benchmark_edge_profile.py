@@ -3,7 +3,7 @@
 Comprehensive Edge Benchmarking & Resource Profiler for Raspberry Pi 4 (ARM64).
 
 Evaluates:
-  1. DSP AI Denoiser (DeepFilterNet ONNX)
+  1. DSP AI Denoiser (DuoFilter ONNX)
   2. NLU Edge Pipeline (Lexical Normalizer + Single-Pass SetFit + Slot Extractor)
   3. Orchestrator ZeroMQ Dispatcher & LVC Snapshot Bus
   4. Full Pipeline CPU, RAM, Latency, and Real-Time Factor (RTF)
@@ -69,7 +69,7 @@ def benchmark_denoiser(wav_path: Optional[str] = None, iterations: int = 5) -> D
     print(" [1/3] PROFILING DSP AI DENOISER (DeepFilterNet ONNX)")
     print("=" * 70)
 
-    model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
+    model_path = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
     
     if wav_path:
         test_wav = Path(wav_path).resolve()
