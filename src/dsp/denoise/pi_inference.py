@@ -85,7 +85,7 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
 # ---------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------
-ONNX_MODEL_PATH = "src/dsp/denoise/deepfilternet.onnx"
+ONNX_MODEL_PATH = "src/dsp/denoise/onnx/deepfilternet.onnx"
 INPUT_WAV = "src/dsp/denoise/audio/noise_audio.wav"
 OUTPUT_WAV = "src/dsp/denoise/audio/clean_audio.wav"
 
