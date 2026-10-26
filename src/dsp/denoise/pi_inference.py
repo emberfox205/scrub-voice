@@ -88,7 +88,12 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
 
 class DeepFilterDenoiser:
     """DeepFilterNet ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
-
+    # ---------------------------------------------------------
+    # Configuration
+    # ---------------------------------------------------------
+    ONNX_MODEL_PATH = "src/dsp/denoise/onnx/deepfilternet.onnx"
+    INPUT_WAV = "src/dsp/denoise/audio/noise_audio.wav"
+    OUTPUT_WAV = "src/dsp/denoise/audio/clean_audio.wav"
     def __init__(
         self,
         model_path: Path | str | None = None,
