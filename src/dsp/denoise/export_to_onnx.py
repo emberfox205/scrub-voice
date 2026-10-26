@@ -1,6 +1,6 @@
 import argparse
 import torch
-from model.DeepFilterNetDNN import DeepFilterNetDNN
+from src.dsp.denoise.model.DeepFilterNet.DeepFilterNetDNN import DeepFilterNetDNN
 
 def export_model(checkpoint_path, output_path="deepfilternet.onnx"):
     print(f"Loading checkpoint from: {checkpoint_path}")
