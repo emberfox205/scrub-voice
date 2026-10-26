@@ -151,10 +151,12 @@ def benchmark_denoiser(
             chunk_samples = int(sr * chunk_dur_s)
             chunk_wav = wav_tensor[:chunk_samples].unsqueeze(0)
             window = torch.hann_window(512).pow(0.5)
-            stft_input = wav_to_stft(chunk_wav, n_fft=512, hop_length=256, win_length=512, window=window).numpy().astype(np.float32)
+            stft_t = wav_to_stft(chunk_wav, n_fft=512, hop_length=256, win_length=512, window=window)
+            if stft_t.shape[2] < 63:
+                stft_t = torch.nn.functional.pad(stft_t, (0, 0, 0, 63 - stft_t.shape[2]), mode="constant", value=0.0)
+            stft_input = stft_t.numpy().astype(np.float32)
         except Exception:
-            T = max(1, int((16000 * chunk_dur_s) / 256))
-            stft_input = np.random.randn(1, 2, T, 257).astype(np.float32)
+            stft_input = np.random.randn(1, 2, 63, 257).astype(np.float32)
         feed_dict = {input_name: stft_input}
     else:
         # DeepFilterNet input tensor signature [1, 1, T, 32] and [1, 2, T, 96]

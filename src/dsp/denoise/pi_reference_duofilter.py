@@ -123,6 +123,19 @@ class DuoFilterDenoiser:
         Returns 1D float32 np.ndarray matching the input audio length.
         """
         orig_len = audio.shape[-1]
+        if orig_len == 0:
+            return np.zeros(0, dtype=np.float32)
+
+        # For long audio streams, process sequentially in standard 0.5s chunks (8000 samples)
+        if orig_len > 16000:
+            step = 8000
+            out_chunks = []
+            for start in range(0, orig_len, step):
+                end = min(start + step, orig_len)
+                chunk = audio[..., start:end]
+                out_chunks.append(self.enhance(chunk))
+            return np.concatenate(out_chunks, axis=-1).astype(np.float32)
+
         wav_t = torch.from_numpy(audio.astype(np.float32))
         if wav_t.ndim == 1:
             wav_t = wav_t.unsqueeze(0)
@@ -137,9 +150,21 @@ class DuoFilterDenoiser:
             window=self.window,
         )
 
-        ort_inputs = {self.input_name: noisy_stft.numpy().astype(np.float32)}
+        T = noisy_stft.shape[2]
+        # Option A: When T < 63 (such as T=32 for 0.5s chunks), pad time dimension with zeros to 63 frames
+        if T < 63:
+            pad_T = 63 - T
+            stft_input = torch.nn.functional.pad(noisy_stft, (0, 0, 0, pad_T), mode="constant", value=0.0)
+        else:
+            stft_input = noisy_stft
+
+        ort_inputs = {self.input_name: stft_input.numpy().astype(np.float32)}
         ort_outputs = self.session.run([self.output_name], ort_inputs)
         enhanced_stft = torch.from_numpy(ort_outputs[0])
+
+        # Slice back to original T frames before iSTFT reconstruction
+        if T < 63:
+            enhanced_stft = enhanced_stft[:, :, :T, :]
 
         enh_wav = stft_to_wav(
             enhanced_stft,
