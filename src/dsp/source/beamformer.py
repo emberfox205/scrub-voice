@@ -6,7 +6,7 @@ class DASBeamformer:
     Delay-and-Sum (DAS) Beamformer with Competitive Spatial Masking.
     Module 3 in the DSP pipeline:
     - Single speaker: Steers constructive interference toward target angle.
-    - Multiple speakers: Applies Time-Frequency competitive spatial masking
+    - Multiple speakers: Applies Soft Wiener Masking in the STFT domain
       to eliminate acoustic cross-talk between overlapping talkers.
     """
     def __init__(
@@ -111,7 +111,7 @@ class DASBeamformer:
         Steers beam(s) towards one or more target angles.
         - If target_angles is a float (e.g. 180.0): returns 1D array of shape (num_samples,).
         - If target_angles is a list (e.g. [60.0, 180.0]): returns List[1D array] with
-          competitive Time-Frequency spatial masking applied to eliminate cross-talk.
+          Soft Wiener cross-talk suppression applied between competing talkers
         """
         # 1. Normalize input to list and remember if input was single float
         is_single = isinstance(target_angles, (int, float))
