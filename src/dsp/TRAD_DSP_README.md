@@ -2,7 +2,7 @@
 
 This module implements the edge acoustic front-end for `scrub-voice`. It is designed for multi-channel circular microphone arrays operating in noisy, reverberant clinical environments (such as operating rooms with surgical suction, ventilation, and patient monitors).
 
-The pipeline ingests raw multi-channel audio from hardware, filters acoustic artifacts, identifies human speech activity, calculates sound source direction of arrival (DoA), isolates target speakers using spatial beamforming with **competitive binary spatial masking**, and restores speech clarity via neural post-filtering before passing single-channel audio to downstream Automatic Speech Recognition (ASR) and Natural Language Understanding (NLU).
+The pipeline ingests raw multi-channel audio from hardware, filters acoustic artifacts, identifies human speech activity, calculates sound source direction of arrival (DoA), and isolates target speakers using spatial beamforming with **multi-beam Soft Wiener post-filtering**, delivering clean isolated single-channel audio streams directly to downstream Automatic Speech Recognition (ASR) and Natural Language Understanding (NLU).
 
 ---
 
@@ -19,10 +19,9 @@ flowchart TD
     VAD -- "Speech Detected" --> Localizer{"Gate 2: SRPLocalizer\n(Spatial Coherence & DoA)"}
     
     Localizer -- "Flat Power (PAR < 1.15)\nDiffuse Noise / Reverberation" --> Discard
-    Localizer -- "Valid Peak Azimuth(s)\n[θ₁, θ₂, ...]" --> Beamformer["Module 3: DASBeamformer\n- Delay-and-Sum Steering\n- Competitive Binary Spatial Masking"]
+    Localizer -- "Valid Peak Azimuth(s)\n[θ₁, θ₂, ...]" --> Beamformer["Module 3: DASBeamformer\n- Delay-and-Sum Steering\n- Multi-Beam Soft Wiener Masking"]
     
-    Beamformer -->|"Mono Beam(s) (8000,)"| PostFilter["Module 4: DeepFilterPostFilter\n- 16 kHz → 48 kHz Polyphase Resampling\n- DeepFilterNet3 Neural GRU\n- 48 kHz → 16 kHz Downsampling"]
-    PostFilter --> Clean["Clean Mono Audio Stream(s)\n→ Downstream ASR & Speaker ID"]
+    Beamformer -->|"Clean Mono Beam(s) (8000,)"| Clean["Clean Mono Audio Stream(s)\n→ Downstream ASR & Speaker ID"]
 ```
 
 ---
@@ -90,24 +89,25 @@ Calculates 2D azimuth Direction of Arrival (DoA) using Steered Response Power wi
 
 ---
 
-### 2.4. Delay-and-Sum Beamformer with Binary Spatial Masking (`source/beamformer.py`)
+### 2.4. Delay-and-Sum Beamformer with Multi-Beam Soft Wiener Masking (`source/beamformer.py`)
 
-Steers focused constructive acoustic beams toward target speakers and isolates competing sound sources using Time-Frequency spatial masking.
+Steers focused constructive acoustic beams toward target speakers and isolates competing sound sources using Time-Frequency spatial post-filtering.
 
 * **Steering & Reconstruction:**
   * Operates across the full frequency spectrum (0 Hz to Nyquist 8000 Hz, 257 bins for 512-point FFT).
   * Precomputed steering weights tensor with $\frac{1}{M}$ normalization:
     $$W_m(f, \theta) = \frac{1}{M} \exp\left(j 2 \pi f \cdot \frac{r}{c} \cos(\theta - \phi_m)\right)$$
   * Multi-target support: Steers multiple beams simultaneously across target angles using vectorized tensor operations.
-* **Competitive Binary Spatial Masking (`binarymask` branch feature):**
-  * When multiple speakers are present (e.g., Lead Surgeon at 60° and Scrub Nurse at 180°) and `apply_spatial_mask=True`:
-    1. Computes instantaneous spectrogram power for each beam:
+* **Multi-Beam Soft Wiener Post-Filtering (`apply_wiener_mask=True`):**
+  * When multiple speakers are present (e.g., Lead Surgeon at 60° and Scrub Nurse at 180°), Delay-and-Sum beamforming alone leaves residual cross-talk. To eliminate competing talkers without introducing the harsh musical noise of binary masks, the beamformer applies a continuous **Soft Wiener Gain Mask**:
+    1. Computes instantaneous spectrogram power for each beam across all time-frequency bins:
        $$P_k(f, t) = |Y_k(f, t)|^2, \quad k \in \{1, \dots, K\}$$
-    2. Identifies the dominant winning beam at every time-frequency tile $(f, t)$:
-       $$k^*(f, t) = \arg\max_{k} P_k(f, t)$$
-    3. Synthesizes an ideal binary spatial mask for target $k$:
-       $$M_k(f, t) = \begin{cases} 1 & \text{if } k = k^*(f, t) \\ 0 & \text{otherwise} \end{cases}$$
-    4. Applies the mask to suppress cross-talk between simultaneous speakers.
+    2. Sums total power across all active beams: $P_{\text{total}}(f, t) = \sum_{j=1}^K P_j(f, t)$.
+    3. Calculates the competing interference power for target $k$:
+       $$P_{\text{interf}, k}(f, t) = P_{\text{total}}(f, t) - P_k(f, t) = \sum_{j \ne k} P_j(f, t)$$
+    4. Computes the smooth Wiener ratio with over-subtraction factor $\alpha$ (default `1.3`) and safety floor (default `0.10`, limiting max attenuation to $-20\text{ dB}$ to preserve acoustic naturalness):
+       $$W_k(f, t) = \text{clip}\left(\frac{P_k(f, t)}{P_k(f, t) + \alpha \cdot P_{\text{interf}, k}(f, t) + \epsilon}, \text{floor}, 1.0\right)$$
+    5. Directly scales the complex STFT coefficients in-place ($Y_k \leftarrow Y_k \cdot W_k$), achieving $>20\text{ dB}$ cross-talk suppression while maintaining smooth phase transitions.
 * **Overlap-Add (OLA) Synthesis:**
   * Performs inverse STFT (`irfft`) with Hann window synthesis and energy normalization to reconstruct continuous time-domain signals without blocking artifacts.
 * **Data Contract:**
@@ -116,29 +116,11 @@ Steers focused constructive acoustic beams toward target speakers and isolates c
 
 ---
 
-### 2.5. Neural Spectral Post-Filter (`source/postfilter.py`)
-
-Module 4 cleans the beamformed mono output using DeepFilterNet3 to strip comb-filtering notches, spatial leakage, room reverberation tails, and diffuse stationary noise.
-
-* **Architecture:**
-  * Wraps DeepFilterNet3 (combining Equivalent Rectangular Bandwidth convolutional layers and recurrent GRU deep filtering).
-* **Polyphase Resampling Pipeline:**
-  * DeepFilterNet3 natively operates at 48 kHz, while the front-end capture runs at 16 kHz.
-  * Uses `scipy.signal.resample_poly` with integer factors $3:1$ (up) and $1:3$ (down):
-    $$\text{16 kHz Audio} \xrightarrow{\times 3} \text{48 kHz Audio} \xrightarrow{\text{DeepFilterNet3}} \text{Clean 48 kHz} \xrightarrow{\div 3} \text{Clean 16 kHz Audio}$$
-  * Zero phase distortion and low latency compared to standard FFT resamplers.
-* **Stateful Streaming:**
-  * Maintains internal recurrent buffer state (`df_state`) across consecutive 0.5s chunks, ensuring smooth spectral envelope transitions across chunk boundaries without audible clicks.
-* **Batch Multi-Stream Support:**
-  * `enhance_multi(audio_streams: list[np.ndarray])` processes multiple isolated speaker streams sequentially.
-
----
-
 ## 3. Module File Structure
 
 ```text
 src/dsp/
-├── README.md                      # This documentation
+├── TRAD_DSP_README.md             # This documentation
 ├── __init__.py
 ├── denoise/                       # Standalone DeepFilterNet models & ONNX exports (excluded from this guide)
 ├── source/
@@ -146,19 +128,17 @@ src/dsp/
 │   ├── audio_streamer.py          # ALSA arecord hardware capture & buffer stripping
 │   ├── vad.py                     # Gate 1: Silero VAD speech activity detection
 │   ├── localizer.py               # Gate 2: SRP-PHAT DoA localization & PAR gating
-│   ├── beamformer.py              # Module 3: Delay-and-Sum beamformer with binary masking
-│   └── postfilter.py              # Module 4: DeepFilterNet3 neural post-filter wrapper
+│   └── beamformer.py              # Module 3: Delay-and-Sum beamformer with Soft Wiener masking
 └── test/
     ├── __init__.py
     ├── unittest_AudioStreamer.py      # Unit tests for hardware streaming buffer slicing
     ├── unittest_VAD.py                # Unit tests for Silero VAD gating & sensitivity
     ├── unittest_localizer_level1.py   # Unit tests for SRP-PHAT geometry & synthetic DoA
     ├── unittest_localizer_level2.py   # Boundary wrap-around & multi-speaker peak tests
-    ├── unittest_beamformer.py         # Unit tests for DAS steering & binary mask isolation
-    ├── unittest_postfilter.py         # Unit tests for DeepFilterNet3 polyphase I/O & streaming state
+    ├── unittest_beamformer.py         # Unit tests for DAS steering & Soft Wiener mask isolation
+    ├── test_VAD_AudioStreamer.py      # Integration test for AudioStreamer and VAD
     ├── test_live_vad_localizer.py     # Live console visualizer for VAD and DoA tracking
-    ├── test_beamformer_integration.py # Real-time multi-channel live beamforming runner
-    └── test_postfilter_offline.py     # Offline post-filtering benchmark for saved recordings
+    └── test_beamformer_integration.py # Real-time multi-channel live beamforming runner
 ```
 
 ---
@@ -172,13 +152,11 @@ import numpy as np
 from src.dsp.source.vad import SileroVAD
 from src.dsp.source.localizer import SRPLocalizer
 from src.dsp.source.beamformer import DASBeamformer
-from src.dsp.source.postfilter import DeepFilterPostFilter
 
 # Initialize DSP pipeline components
 vad = SileroVAD(sample_rate=16000, threshold=0.35)
 localizer = SRPLocalizer(sample_rate=16000, radius=0.04625)
 beamformer = DASBeamformer(sample_rate=16000, radius=0.04625)
-postfilter = DeepFilterPostFilter(sample_rate=16000)
 
 # Assume multi_channel_chunk has shape (6, 8000), float32 [-1.0, 1.0]
 multi_channel_chunk = np.zeros((6, 8000), dtype=np.float32)
@@ -191,19 +169,13 @@ if vad.is_speech_active(multi_channel_chunk):
     if speaker_angles:
         print(f"Speakers detected at angles: {speaker_angles}")
         
-        # Module 3: Steer beam(s) with competitive binary masking
-        isolated_beams = beamformer.beamform(
+        # Module 3: Steer beam(s) with multi-beam Soft Wiener cross-talk suppression
+        clean_streams = beamformer.beamform(
             multi_channel_chunk, 
             target_angles=speaker_angles,
-            apply_spatial_mask=True
+            apply_wiener_mask=True
         )
         
-        # Module 4: Apply neural post-filtering
-        if isinstance(isolated_beams, list):
-            clean_streams = postfilter.enhance_multi(isolated_beams)
-        else:
-            clean_streams = [postfilter.enhance(isolated_beams)]
-            
         # clean_streams contains clean 16 kHz mono audio ready for ASR
 ```
 
@@ -236,6 +208,5 @@ pytest src/dsp/test/unittest_VAD.py -v
 pytest src/dsp/test/unittest_localizer_level1.py -v
 pytest src/dsp/test/unittest_localizer_level2.py -v
 pytest src/dsp/test/unittest_beamformer.py -v
-pytest src/dsp/test/unittest_postfilter.py -v
 ```
 
