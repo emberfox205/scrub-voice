@@ -18,6 +18,12 @@ ur_arm/
 │   ├── asr/
 │   └── dsp/
 ├── docs/
+├── evaluations/
+│   ├── asr/
+│   ├── dsp/
+│   ├── full-pipe/
+│   ├── nlu/
+│   └── orchestrator/
 ├── schemas/
 ├── src/
 │   ├── actuators/
@@ -52,6 +58,16 @@ ur_arm/
 
 * **Purpose:** Technical guides, hardware deployment manuals, workflow policies, and project documentation.
 * **Rule:** All markdown documentation files (except the root `README.md`) must reside here and follow the uppercase naming convention (`LIKE_THIS.md`).
+
+### `evaluations/`
+
+* **Purpose:** Empirical edge performance benchmarks, latency profiling, metric definitions, and recommendations for subsystem improvements across all pipeline modules.
+* **Subdirectories:**
+  * `dsp/`: Multi-channel beamforming, DeepFilterNet suppression, and Silero VAD gating.
+  * `asr/`: Vosk grammar FST decoding, token posterior confidence, and vocabulary expansion.
+  * `nlu/`: SetFit transformer latency, ARM thread scaling, and Draft 2020-12 schema validation.
+  * `orchestrator/`: ZeroMQ IPC dual-channel priority transit, LVC state caching, and watchdog failover.
+  * `full-pipe/`: End-to-end voice-to-display latency budgets, RAM footprint, and clinical ergonomics.
 
 ### `proposal/`
 

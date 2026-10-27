@@ -32,7 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # src/ on sys.path, like the other modules
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))  # src/ on sys.path, like the other modules
 
 from asr.audio import TARGET_SR, load_audio
 from asr.bench_configs import CONFIGS, PRODUCTION_CONFIG
@@ -45,10 +46,21 @@ CHUNK_S = 0.5
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [ASR] %(message)s")
 logger = logging.getLogger("asr")
 
+DEBUG_LOG_DIR = REPO_ROOT / "results"
+DEBUG_LOG_DIR.mkdir(parents=True, exist_ok=True)
+DEBUG_LOG_FILE = DEBUG_LOG_DIR / "asr_transcripts.jsonl"
+
 
 def log_result(result, seconds: float) -> None:
-    logger.info(f"{result.text!r} -> {result.normalized!r} (confidence {result.confidence}, "
-                f"transcribed in {seconds:.2f} s)")
+    words_detail = ", ".join(f"{w.word}:{w.confidence:.2f}" for w in result.words) if result.words else "none"
+    logger.info(
+        f"{result.text!r} -> {result.normalized!r} (conf: {result.confidence}, {seconds:.2f}s) | Tokens: [{words_detail}]"
+    )
+    try:
+        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(result.to_json() + "\n")
+    except Exception:
+        pass
 
 
 def open_push(asr_addr: str):

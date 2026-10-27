@@ -1,0 +1,35 @@
+{
+  "tools": {
+    "scalpel": ["scalpel", "knife", "ten blade", "blade", "10 blade"],
+    "scissors": ["scissors", "iris", "metz", "metzenbaum", "surgical scissors"],
+    "hemostat": ["hemostat", "clamp", "snap", "artery forceps"],
+    "forceps": ["forceps", "tweezers", "pickups", "pickup", "tissue forceps"]
+  },
+  "scan_types": {
+    "ct": ["ct", "ct scan", "computed tomography", "cat scan", "abdominal ct", "chest ct", "head ct"],
+    "mri": ["mri", "magnetic resonance", "mr", "brain mri", "spine mri"],
+    "xray": ["xray", "x-ray", "x ray", "radiograph", "chest x-ray"]
+  },
+  "camera_move_directions": {
+    "LEFT": ["left"],
+    "RIGHT": ["right"],
+    "UP": ["up"],
+    "DOWN": ["down"],
+    "FORWARD": ["forward", "in", "closer", "ahead"],
+    "BACKWARD": ["backward", "back", "away", "reverse"]
+  },
+  "camera_tilt_directions": {
+    "UP": ["up", "upward", "pitch up"],
+    "DOWN": ["down", "downward", "pitch down"],
+    "LEFT": ["left", "yaw left"],
+    "RIGHT": ["right", "yaw right"]
+  },
+  "slice_directions": {
+    "NEXT": ["next", "forward", "ahead", "advance"],
+    "PREVIOUS": ["previous", "prev", "back", "backward", "reverse", "rewind"]
+  },
+  "zoom_directions": {
+    "IN": ["in", "closer", "magnify", "increase"],
+    "OUT": ["out", "wider", "reduce", "decrease"]
+  }
+}
