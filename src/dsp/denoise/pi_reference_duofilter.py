@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import argparse
+import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import onnxruntime as ort
+import soundfile as sf
 import torch
 import torchaudio
 from torch import Tensor
 
 CURRENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CURRENT_DIR.parents[2]
+DEFAULT_MODEL_PATH = CURRENT_DIR / "onnx" / "duofilter.onnx"
 
 
 # ---------------------------------------------------------
@@ -79,7 +83,15 @@ def stft_to_wav(
 # DuoFilter Denoiser Class
 # ---------------------------------------------------------
 class DuoFilterDenoiser:
-    """DuoFilter ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
+    """
+    DuoFilter ONNX inference engine optimized for Raspberry Pi / Edge CPU.
+    
+    Supports:
+    1. Continuous full-audio processing without chunk boundary artifacts or comb filtering.
+    2. Real-time streaming mode with true Overlap-Add (OLA) buffer to preserve the COLA condition.
+    3. Safe multi-channel downmixing (preserves primary microphone phase, avoids spatial comb filtering).
+    4. Optional phase-preservation (magnitude-masking mode for high reverberation environments).
+    """
 
     DEFAULT_ONNX_PATH = CURRENT_DIR / "onnx" / "duofilter.onnx"
 
@@ -115,33 +127,87 @@ class DuoFilterDenoiser:
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
 
+        # Square-root Hann window satisfies COLA condition with 50% overlap
         self.window = torch.hann_window(self.win_length).pow(0.5)
 
-    def enhance(self, audio: np.ndarray) -> np.ndarray:
+        # Streaming state buffers
+        self.reset_states()
+
+    def reset_states(self) -> None:
+        """Reset internal streaming OLA buffers."""
+        self._stream_in_buffer = torch.zeros(0, dtype=torch.float32)
+        self._stream_ola_buffer = torch.zeros(self.win_length, dtype=torch.float32)
+
+    def _downmix(self, audio: np.ndarray, channel_idx: int = 0) -> np.ndarray:
         """
-        Enhance mono audio (1D float32 or [C, T]).
-        Returns 1D float32 np.ndarray matching the input audio length.
+        Safely convert multi-channel audio to mono.
+        Selecting a single reference microphone channel prevents acoustic spatial
+        comb filtering caused by inter-microphone phase delays.
         """
-        orig_len = audio.shape[-1]
+        if audio.ndim == 1:
+            return audio
+        if audio.ndim == 2:
+            if audio.shape[0] < audio.shape[1]:
+                # Shape: [C, N]
+                ch = min(channel_idx, audio.shape[0] - 1)
+                return audio[ch, :]
+            else:
+                # Shape: [N, C]
+                ch = min(channel_idx, audio.shape[1] - 1)
+                return audio[:, ch]
+        return audio.flatten()
+
+    def enhance(
+        self,
+        audio: np.ndarray,
+        sample_rate: Optional[int] = None,
+        phase_preservation: bool = False,
+        channel_idx: int = 0,
+        streaming: bool = False,
+    ) -> np.ndarray:
+        """
+        Enhance 1D or multi-channel audio array.
+        
+        Args:
+            audio: 1D or 2D numpy array of audio samples.
+            sample_rate: Input sampling rate (resampled to 16000 Hz if different).
+            phase_preservation: If True, applies magnitude attenuation only and keeps
+                                the input acoustic phase. This avoids hollow phase cancellation
+                                in highly reverberant rooms.
+            channel_idx: For multi-channel inputs, microphone index to use (avoids spatial comb filtering).
+            streaming: If True, uses stateful Overlap-Add across sequential chunk calls.
+        
+        Returns:
+            Enhanced 1D float32 numpy array sampled at 16000 Hz matching original input duration.
+        """
+        orig_len = audio.shape[-1] if audio.ndim == 1 or audio.shape[0] < audio.shape[1] else audio.shape[0]
         if orig_len == 0:
             return np.zeros(0, dtype=np.float32)
 
-        # For long audio streams, process sequentially in standard 0.5s chunks (8000 samples)
-        if orig_len > 16000:
-            step = 8000
-            out_chunks = []
-            for start in range(0, orig_len, step):
-                end = min(start + step, orig_len)
-                chunk = audio[..., start:end]
-                out_chunks.append(self.enhance(chunk))
-            return np.concatenate(out_chunks, axis=-1).astype(np.float32)
+        # Downmix multi-channel to mono safely
+        audio_mono = self._downmix(audio, channel_idx=channel_idx)
 
-        wav_t = torch.from_numpy(audio.astype(np.float32))
+        wav_t = torch.from_numpy(audio_mono.astype(np.float32))
+
+        # Resample if needed
+        if sample_rate is not None and sample_rate != self.sample_rate:
+            wav_t = torchaudio.functional.resample(
+                wav_t, orig_freq=sample_rate, new_freq=self.sample_rate
+            )
+
+        if streaming:
+            return self.stream_enhance(wav_t.numpy(), phase_preservation=phase_preservation)
+
+        target_len = wav_t.shape[-1]
         if wav_t.ndim == 1:
             wav_t = wav_t.unsqueeze(0)
-        elif wav_t.shape[0] > 1:
-            wav_t = wav_t.mean(dim=0, keepdim=True)
 
+        # Ensure signal is at least win_length for reflection padding
+        pad_samples = max(0, self.win_length - wav_t.shape[-1])
+        if pad_samples > 0:
+            wav_t = torch.nn.functional.pad(wav_t, (0, pad_samples), mode="constant", value=0.0)
+
+        # Continuous STFT across the entire waveform (NO CHUNKING!)
         noisy_stft = wav_to_stft(
             wav_t,
             n_fft=self.n_fft,
@@ -151,9 +217,9 @@ class DuoFilterDenoiser:
         )
 
         T = noisy_stft.shape[2]
-        # Option A: When T < 63 (such as T=32 for 0.5s chunks), pad time dimension with zeros to 63 frames
-        if T < 63:
-            pad_T = 63 - T
+        TARGET_FRAMES = 32
+        if T < TARGET_FRAMES:
+            pad_T = TARGET_FRAMES - T
             stft_input = torch.nn.functional.pad(noisy_stft, (0, 0, 0, pad_T), mode="constant", value=0.0)
         else:
             stft_input = noisy_stft
@@ -162,36 +228,229 @@ class DuoFilterDenoiser:
         ort_outputs = self.session.run([self.output_name], ort_inputs)
         enhanced_stft = torch.from_numpy(ort_outputs[0])
 
-        # Slice back to original T frames before iSTFT reconstruction
-        if T < 63:
+        if T < TARGET_FRAMES:
             enhanced_stft = enhanced_stft[:, :, :T, :]
 
+        # Optional Phase Preservation: Use magnitude from model + original noisy phase
+        if phase_preservation:
+            spec_noisy = torch.complex(noisy_stft[:, 0].float(), noisy_stft[:, 1].float())
+            spec_enh = torch.complex(enhanced_stft[:, 0].float(), enhanced_stft[:, 1].float())
+            noisy_phase = torch.angle(spec_noisy)
+            enh_mag = torch.clamp(spec_enh.abs(), min=1e-8)
+            mag_only_complex = enh_mag * torch.exp(1j * noisy_phase)
+            enhanced_stft = torch.stack([mag_only_complex.real, mag_only_complex.imag], dim=1)
+
+        # Continuous iSTFT across full spectrogram
         enh_wav = stft_to_wav(
             enhanced_stft,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
             window=self.window,
-            length=orig_len,
+            length=target_len + pad_samples,
         )
+
+        if pad_samples > 0:
+            enh_wav = enh_wav[..., :target_len]
+
         return enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+
+    def stream_enhance(
+        self,
+        chunk: np.ndarray,
+        phase_preservation: bool = False,
+    ) -> np.ndarray:
+        """
+        Stateful streaming enhancement with Overlap-Add (OLA).
+        Processes real-time audio blocks (e.g. 0.5s or 250ms chunks) without
+        boundary amplitude drops or phase discontinuities.
+        """
+        chunk_t = torch.from_numpy(chunk.astype(np.float32)).view(-1)
+        self._stream_in_buffer = torch.cat([self._stream_in_buffer, chunk_t])
+
+        if self._stream_in_buffer.shape[0] < self.win_length:
+            return np.zeros(0, dtype=np.float32)
+
+        num_frames = (self._stream_in_buffer.shape[0] - self.win_length) // self.hop_length + 1
+        if num_frames <= 0:
+            return np.zeros(0, dtype=np.float32)
+
+        total_consumed = (num_frames - 1) * self.hop_length + self.win_length
+        stream_segment = self._stream_in_buffer[:total_consumed]
+        self._stream_in_buffer = self._stream_in_buffer[num_frames * self.hop_length:]
+
+        frames = stream_segment.unfold(dimension=0, size=self.win_length, step=self.hop_length)
+        windowed_frames = frames * self.window
+
+        spec = torch.fft.rfft(windowed_frames, n=self.n_fft)
+        stft_input = torch.stack([spec.real, spec.imag], dim=0).unsqueeze(0).permute(0, 1, 2, 3)
+
+        T = stft_input.shape[2]
+        TARGET_FRAMES = 32
+        if T < TARGET_FRAMES:
+            pad_T = TARGET_FRAMES - T
+            stft_in_padded = torch.nn.functional.pad(stft_input, (0, 0, 0, pad_T), mode="constant", value=0.0)
+        else:
+            stft_in_padded = stft_input
+
+        ort_inputs = {self.input_name: stft_in_padded.numpy().astype(np.float32)}
+        ort_outputs = self.session.run([self.output_name], ort_inputs)
+        enhanced_stft = torch.from_numpy(ort_outputs[0])
+
+        if T < TARGET_FRAMES:
+            enhanced_stft = enhanced_stft[:, :, :T, :]
+
+        if phase_preservation:
+            spec_noisy = torch.complex(stft_input[:, 0].float(), stft_input[:, 1].float())
+            spec_enh = torch.complex(enhanced_stft[:, 0].float(), enhanced_stft[:, 1].float())
+            noisy_phase = torch.angle(spec_noisy)
+            enh_mag = torch.clamp(spec_enh.abs(), min=1e-8)
+            mag_only_complex = enh_mag * torch.exp(1j * noisy_phase)
+            enhanced_stft = torch.stack([mag_only_complex.real, mag_only_complex.imag], dim=1)
+
+        enh_complex = torch.complex(enhanced_stft[0, 0].float(), enhanced_stft[0, 1].float())
+        synth_frames = torch.fft.irfft(enh_complex, n=self.n_fft) * self.window
+
+        out_samples = []
+        for t in range(T):
+            frame_time = synth_frames[t]
+            self._stream_ola_buffer += frame_time
+            out_samples.append(self._stream_ola_buffer[:self.hop_length].clone())
+            self._stream_ola_buffer = torch.cat([
+                self._stream_ola_buffer[self.hop_length:],
+                torch.zeros(self.hop_length, dtype=torch.float32)
+            ])
+
+        if len(out_samples) == 0:
+            return np.zeros(0, dtype=np.float32)
+        return torch.cat(out_samples).cpu().numpy().astype(np.float32)
+
+    def enhance_file(
+        self,
+        input_path: Union[Path, str],
+        output_path: Union[Path, str],
+        phase_preservation: bool = False,
+        channel_idx: int = 0,
+        streaming: bool = False,
+        chunk_size: int = 8000,
+    ) -> Tuple[Path, float]:
+        """
+        Enhance an audio file from disk and save the clean output.
+        
+        Args:
+            input_path: Path to noisy WAV file.
+            output_path: Path to save enhanced WAV file.
+            phase_preservation: Whether to preserve original noisy phase.
+            channel_idx: Primary channel to extract from multi-channel audio.
+            streaming: If True, simulates chunk-by-chunk real-time streaming with OLA.
+            chunk_size: Chunk size in samples for streaming mode (default: 8000 = 0.5s @ 16kHz).
+            
+        Returns:
+            (output_path, real_time_factor)
+        """
+        in_p = Path(input_path).resolve()
+        out_p = Path(output_path).resolve()
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+
+        audio, sr = sf.read(str(in_p), dtype="float32")
+        n_samples = audio.shape[0] if audio.ndim == 1 or audio.shape[0] > audio.shape[1] else audio.shape[1]
+        duration = n_samples / sr
+
+        if streaming:
+            print(f"[*] Processing in Real-Time STREAMING mode (chunk_size={chunk_size} samples / {chunk_size/self.sample_rate*1000:.0f}ms)...")
+            self.reset_states()
+            out_chunks = []
+            t0 = time.perf_counter()
+            for start in range(0, n_samples, chunk_size):
+                chunk = audio[start : start + chunk_size] if audio.ndim == 1 else audio[start : start + chunk_size, :]
+                clean_chunk = self.enhance(
+                    chunk,
+                    sample_rate=sr,
+                    phase_preservation=phase_preservation,
+                    channel_idx=channel_idx,
+                    streaming=True,
+                )
+                out_chunks.append(clean_chunk)
+            clean = np.concatenate(out_chunks) if out_chunks else np.zeros(0, dtype=np.float32)
+            proc_time = time.perf_counter() - t0
+        else:
+            print("[*] Processing in Full-File STATIC continuous mode...")
+            t0 = time.perf_counter()
+            clean = self.enhance(
+                audio,
+                sample_rate=sr,
+                phase_preservation=phase_preservation,
+                channel_idx=channel_idx,
+                streaming=False,
+            )
+            proc_time = time.perf_counter() - t0
+
+        rtf = proc_time / max(1e-6, duration)
+        sf.write(str(out_p), clean, self.sample_rate)
+
+        return out_p, rtf
 
 
 # ---------------------------------------------------------
 # Standalone CLI / Verification
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    input_wav = CURRENT_DIR / "audio" / "noise_audio.wav"
-    output_wav = CURRENT_DIR / "audio" / "clean_audio.wav"
-    if not input_wav.exists():
-        input_wav = REPO_ROOT / "data" / "asr" / "sample_01.wav"
+    parser = argparse.ArgumentParser(description="DuoFilter Speech Enhancement / Denoising")
+    parser.add_argument(
+        "--input",
+        type=str,
+        default=str(REPO_ROOT / "data" / "asr" / "test_clip_event.wav"),
+        help="Input noisy wav file path",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=str(CURRENT_DIR / "audio" / "clean_clip_event.wav"),
+        help="Output enhanced wav file path",
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of CPU threads for inference",
+    )
+    parser.add_argument(
+        "--phase-preservation",
+        action="store_true",
+        help="Enable magnitude-only masking and preserve original noisy phase",
+    )
+    parser.add_argument(
+        "--channel",
+        type=int,
+        default=0,
+        help="Channel index to use for multi-channel audio (avoids acoustic comb filter)",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Process audio in real-time chunked streaming mode with Overlap-Add (OLA)",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=8000,
+        help="Chunk size in samples for streaming mode (default: 8000 = 0.5s @ 16kHz)",
+    )
+    args = parser.parse_args()
 
-    print(f"Running DuoFilterDenoiser on {input_wav}...")
-    denoiser = DuoFilterDenoiser()
-    noisy_wav, sr = torchaudio.load(str(input_wav))
-    if sr != denoiser.sample_rate:
-        noisy_wav = torchaudio.functional.resample(noisy_wav, orig_freq=sr, new_freq=denoiser.sample_rate)
+    input_p = Path(args.input)
+    if not input_p.exists():
+        input_p = REPO_ROOT / "data" / "asr" / "sample_01.wav"
 
-    enhanced = denoiser.enhance(noisy_wav.squeeze(0).numpy())
-    torchaudio.save(str(output_wav), torch.from_numpy(enhanced).unsqueeze(0), denoiser.sample_rate)
-    print(f"Saved enhanced audio to {output_wav}")
+    print(f"Running DuoFilterDenoiser on {input_p}...")
+    denoiser = DuoFilterDenoiser(threads=args.threads)
+    out_file, rtf = denoiser.enhance_file(
+        input_p,
+        args.output,
+        phase_preservation=args.phase_preservation,
+        channel_idx=args.channel,
+        streaming=args.stream,
+        chunk_size=args.chunk_size,
+    )
+    print(f"[DuoFilter] Enhanced audio saved to: {out_file}")
+    print(f"[DuoFilter] Real-Time Factor (RTF): {rtf:.4f}")

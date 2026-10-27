@@ -137,9 +137,8 @@ def benchmark_denoiser(
     load_time_s = time.perf_counter() - t_load_start
     ram_load_mb = get_process_memory_mb()
 
-    chunk_dur_s = min(1.0, audio_duration_s)
-
     if dtype == "duofilter":
+        chunk_dur_s = min(0.5, audio_duration_s)
         input_name = session.get_inputs()[0].name
         try:
             wav_tensor = torch.from_numpy(data)
@@ -147,18 +146,19 @@ def benchmark_denoiser(
                 import torchaudio
                 wav_tensor = torchaudio.functional.resample(wav_tensor.unsqueeze(0), orig_freq=sr, new_freq=16000).squeeze(0)
                 sr = 16000
-                chunk_dur_s = min(1.0, len(wav_tensor) / float(sr))
+                chunk_dur_s = min(0.5, len(wav_tensor) / float(sr))
             chunk_samples = int(sr * chunk_dur_s)
             chunk_wav = wav_tensor[:chunk_samples].unsqueeze(0)
             window = torch.hann_window(512).pow(0.5)
             stft_t = wav_to_stft(chunk_wav, n_fft=512, hop_length=256, win_length=512, window=window)
-            if stft_t.shape[2] < 63:
-                stft_t = torch.nn.functional.pad(stft_t, (0, 0, 0, 63 - stft_t.shape[2]), mode="constant", value=0.0)
+            if stft_t.shape[2] < 32:
+                stft_t = torch.nn.functional.pad(stft_t, (0, 0, 0, 32 - stft_t.shape[2]), mode="constant", value=0.0)
             stft_input = stft_t.numpy().astype(np.float32)
         except Exception:
-            stft_input = np.random.randn(1, 2, 63, 257).astype(np.float32)
+            stft_input = np.random.randn(1, 2, 32, 257).astype(np.float32)
         feed_dict = {input_name: stft_input}
     else:
+        chunk_dur_s = min(1.0, audio_duration_s)
         # DeepFilterNet input tensor signature [1, 1, T, 32] and [1, 2, T, 96]
         T = max(1, int((sr * chunk_dur_s) / 128))
         dummy_erb = np.random.randn(1, 1, T, 32).astype(np.float32)
