@@ -67,11 +67,45 @@ class DASBeamformer:
         # -----------------------------------------------------------------
         self.window = np.hanning(self.frame_size).astype(np.float32)
 
+    def wiener_mask(
+            self,
+            Y_stft: np.ndarray,
+            alpha: float = 1.3,
+            floor: float = 0.10,
+            eps: float = 1e-10,
+    ) -> np.ndarray :
+        """
+        Applies Multi-Beam Soft Wiener Masking to eliminate cross-talk between multiple speakers.
+        Args:
+            Y_stft: Complex STFT tensor of shape (num_targets, num_freqs, num_frames)
+            alpha: Over-subtraction aggressiveness (1.0 to 1.5)
+            floor: Safety attenuation floor (0.10 = max -20 dB suppression)
+            eps: Epsilon to prevent division by zero
+        Returns:
+            Masked complex STFT tensor of shape (num_targets, num_freqs, num_frames)
+        """
+        # Shape: (num_targets, num_freqs, num_frames)
+        beam_power = np.abs(Y_stft) ** 2
+
+        # Shape: (1, freqs, frames)
+        total_power = np.sum(beam_power, axis=0, keepdims=True)
+
+        # Broadcasted subtraction:
+        p_interf = total_power - beam_power
+
+        # Soft Wiener Gain for all targets simultaneously
+        wiener_gain = beam_power / (beam_power + alpha * p_interf + eps)
+        wiener_gain = np.clip(wiener_gain, floor, 1.0).astype(np.float32)
+
+        Y_stft *= wiener_gain
+
+        return Y_stft
+
     def beamform(
         self, 
         audio_chunk: np.ndarray, 
         target_angles: Union[float, List[float]],
-        apply_spatial_mask: bool = False,
+        apply_wiener_mask: bool = True,
         ) -> Union[np.ndarray, List[np.ndarray]]:
         """
         Steers beam(s) towards one or more target angles.
@@ -122,20 +156,11 @@ class DASBeamformer:
             Y_stft[:, :, frame_idx] = np.sum(weights * X[None, :, :], axis=1)
 
         # -------------------------------------------------------------
-        # 5. Competitive Spatial Masking (Eliminate Cross-Talk)
+        # 5. Multi-Beam Soft Wiener Masking (Cross-Talk Suppression)
         # Automatically activates only when 2 or more targets exist
         # -------------------------------------------------------------
-        if num_targets > 1 and apply_spatial_mask:
-            # Power of each beam across all time-frequency pixels: (K, freqs, frames)
-            beam_power = np.abs(Y_stft) ** 2
-
-            # Find winner at each pixel: (freqs, frames)
-            winning_beam = np.argmax(beam_power, axis = 0)
-
-            # Mute losing beams at each pixel
-            for k in range(num_targets):
-                mask = (winning_beam == k).astype(np.float32)
-                Y_stft[k] *= mask
+        if num_targets > 1 and apply_wiener_mask:
+            Y_stft = self.wiener_mask(Y_stft)
 
         # -------------------------------------------------------------
         # 6. Overlap-Add (OLA) Synthesis via iSTFT
