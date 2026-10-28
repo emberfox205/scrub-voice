@@ -11,13 +11,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # src/ on sys.path, like the scripts
 
 from asr.audio import load_audio
-from asr.engines.vosk_engine import MODEL_NAME, MODELS_DIR, VoskEngine, _starts_log_event, splice_log_event
+from asr.engines.vosk_engine import (MODEL_NAME, MODELS_DIR, VoskEngine, _starts_log_event, clean_words,
+                                     splice_log_event)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def words(*items: tuple[str, float, float]) -> list[dict]:
     return [{"word": w, "start": s, "end": e, "conf": 1.0} for w, s, e in items]
+
+
+class CleanWordsTest(unittest.TestCase):
+    def test_sound_alike_spellings_are_joined(self):
+        cleaned = clean_words(words(("open", 0.0, 0.3), ("c", 0.3, 0.5), ("t", 0.5, 0.7), ("scan", 0.7, 1.0)))
+        self.assertEqual([w["word"] for w in cleaned], ["open", "ct", "scan"])
+        for spoken, word in [("m r i", "mri"), ("x ray", "x-ray"), ("hemo stat", "hemostat")]:
+            with self.subTest(spoken=spoken):
+                parts = words(*[(p, i, i + 1) for i, p in enumerate(spoken.split())])
+                self.assertEqual([w["word"] for w in clean_words(parts)], [word])
+
+    def test_joined_word_spans_its_parts_with_lowest_confidence(self):
+        parts = [{"word": "hemo", "start": 1.0, "end": 1.3, "conf": 0.9},
+                 {"word": "stat", "start": 1.3, "end": 1.6, "conf": 0.6}]
+        self.assertEqual(clean_words(parts), [{"word": "hemostat", "start": 1.0, "end": 1.6, "conf": 0.6}])
+
+    def test_unk_is_dropped(self):
+        cleaned = clean_words(words(("[unk]", 0.0, 0.2), ("pass", 0.2, 0.5), ("[unk]", 0.5, 0.9)))
+        self.assertEqual([w["word"] for w in cleaned], ["pass"])
+        self.assertEqual(clean_words(words(("[unk]", 0.0, 1.0))), [])
+
+    def test_numbers_and_synonyms_stay_as_said(self):
+        said = words(("zoom", 0, 1), ("in", 1, 2), ("two", 2, 3), ("x", 3, 4), ("please", 4, 5), ("knife", 5, 6))
+        self.assertEqual(clean_words(said), said)
 
 
 class SpliceTest(unittest.TestCase):

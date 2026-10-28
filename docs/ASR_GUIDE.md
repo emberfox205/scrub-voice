@@ -14,8 +14,9 @@ DSP (speech chunks) ──ZeroMQ──▶ ASR (src/asr/) ──ZeroMQ──▶ N
   **only while someone speaks**.
 * One run of speech chunks = one utterance. ASR turns it into text and sends
   **one JSON message per utterance** to NLU.
-* It writes what was said, nothing more: no intent detection, no synonym
-  mapping ("knife" stays "knife"). That is NLU's job.
+* It writes what was said, nothing more: no normalization (numbers stay
+  words), no intent detection, no synonym mapping ("knife" stays "knife").
+  That is NLU's job.
 * Engine: **Vosk** (`vosk-model-small-en-us-0.15`) with a grammar of our
   command words, plus a free-speech pass for the text after "log event" /
   "record milestone". Fully offline. About 0.07 s per command on a laptop,
@@ -67,7 +68,6 @@ One message per utterance, UTF-8 JSON:
 ```json
 {
   "text": "zoom in two x",
-  "normalized": "zoom in 2 x",
   "confidence": 0.875,
   "language": "en",
   "words": [
@@ -82,27 +82,34 @@ One message per utterance, UTF-8 JSON:
 
 | field | meaning |
 | :--- | :--- |
-| `text` | What the engine produced (= `raw_transcript` in the command schema). Speech outside the command words appears as `[unk]`. |
-| `normalized` | Cleaned text for classification: lowercase, no punctuation, no `[unk]`, numbers as digits, "please"/"thanks" removed, common mishearings fixed. **Empty** when nothing usable was heard. |
-| `confidence` | 0–1, mean word confidence. **`null`** when only `[unk]` was heard. |
-| `words` | Word timings in seconds from `segment_start`, with per-word confidence. |
+| `text` | The words as heard (= `raw_transcript` in the command schema), lowercase, **not normalized**: numbers stay words, "please" stays, synonyms stay as said. Speech outside the command words is left out. **Empty** when nothing usable was heard. |
+| `confidence` | 0–1, mean word confidence. **`null`** when `text` is empty. |
+| `words` | The words of `text` with timings in seconds from `segment_start` and per-word confidence. |
 | `segment_start` | Unix time (seconds) when the speech started. Use it for `latency_ms`. |
 
-Written forms in `normalized` (please confirm, Khanh):
+Until 2026-10-28 there was also a `normalized` field. It is gone: NLU is
+the only stage that normalizes (team evaluation, `evaluations/asr/README.md`,
+"Priority 3"). The only fix ASR still makes: words missing from the Vosk
+dictionary, which the grammar spells as sounds, are written as one word
+again – `ct`, `mri`, `x-ray`, `hemostat` (not "c t", "hemo stat").
 
-| said | `normalized` |
+What NLU's normalizer now has to handle on its own (examples; ASR's old
+normalizer handled them):
+
+| said (`text`) | needed |
 | :--- | :--- |
-| "zoom in two x" | `zoom in 2 x` |
-| "one point five x" | `1.5 x` |
-| "go to slice one hundred twenty" | `go to slice 120` |
-| "display X-ray" | `display xray` |
-| "five centimeters" | `5 centimeters` |
-| "fifteen degrees" | `15 degrees` |
+| "zoom in two x", "zoom in two times" | factor 2 |
+| "one point five x" | factor 1.5 |
+| "go to slice one hundred and twenty" | slice 120 (not "100 and 20") |
+| "go to slice a hundred" | slice 100 |
+| "move left five centimeters", "tilt up fifteen degrees" | 5 cm, 15 degrees |
 
 Things NLU should know:
 * **Everyday talk can turn into command words.** The grammar sometimes
   forces non-command speech into command words (measured: "we are running
-  a bit late" → "blade"). Low `confidence` or `[unk]` in `text` are hints.
+  a bit late" → "blade"). Low `confidence` is a hint.
+* **Words outside the grammar are left out,** so "pass that thing" arrives
+  as `pass` – a command word without its slot.
 * Free text after "log event" comes from a general model and is often wrong
   for medical words ("hepatic" → "have pet take"). Store it verbatim.
 * The first "log event" after start-up takes ~0.6 s longer (one-time setup).

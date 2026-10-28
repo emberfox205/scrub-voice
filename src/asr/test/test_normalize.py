@@ -75,11 +75,6 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(normalize("Um, hand me the scalpel please"), "hand me the scalpel please")
         self.assertEqual(normalize("log event [unk] note [unk]"), "log event note")
 
-    def test_json_field(self):
-        # The `normalized` field of the output JSON (src/asr/CLAUDE.md).
-        self.assertEqual(normalize("Zoom in two x, please.", corrections=True, drop_politeness=True), "zoom in 2 x")
-        self.assertEqual(normalize("Okay, next slice please", corrections=True, drop_politeness=True), "okay next slice")
-
     def test_sentence_end_dot_is_removed_but_decimal_kept(self):
         self.assertEqual(normalize("Slice 45."), "slice 45")
         self.assertEqual(normalize("Zoom 2.5x."), "zoom 2.5 x")

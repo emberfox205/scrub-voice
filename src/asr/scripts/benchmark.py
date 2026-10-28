@@ -364,7 +364,7 @@ def main() -> None:
         field_rows.append(output_fields(name, raw))
         # Every config also gets a "+corr" row: same transcripts, scored with
         # the post-correction map (asr/normalize.py) - no extra inference.
-        # The +corr row is what the JSON `normalized` field gives NLU.
+        # NLU never gets corrected text; the row only shows what the map gains.
         variants = [(name, False), (f"{name}+corr", True)]
         for label, corrections in variants:
             scored = [score_clip(c, corrections) for c in raw["clips"] if c["set"] in wanted_sets]

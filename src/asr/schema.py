@@ -2,6 +2,10 @@
 
 This is the contract with the NLP stage - see src/asr/CLAUDE.md "Output schema".
 Do not change field names or shape without telling Khanh.
+
+`text` is the transcript as heard, without any normalization (numbers stay
+words, "please" stays): NLU is the only stage that normalizes (decision
+2026-10-28, evaluations/asr/README.md "Priority 3").
 """
 
 from __future__ import annotations
@@ -22,7 +26,6 @@ class WordInfo:
 @dataclass
 class ASRResult:
     text: str
-    normalized: str
     confidence: Optional[float]
     language: str
     words: list[WordInfo]
@@ -32,7 +35,6 @@ class ASRResult:
         return json.dumps(
             {
                 "text": self.text,
-                "normalized": self.normalized,
                 "confidence": self.confidence,
                 "language": self.language,
                 "words": [

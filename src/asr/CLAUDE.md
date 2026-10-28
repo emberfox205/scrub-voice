@@ -12,7 +12,9 @@ chunks** → **ASR (`src/asr/`, this module): find the speech in the stream and
 transcribe it** → NLU intent classifier (`src/nlu/`, Khanh) → UR10e controller
 (`src/actuators/`) and viewer UI via ZeroMQ.
 
-Owner of this module: Josias. Work happens on the branch **`asr_module`**.
+Owner of this module: Josias. Work happens on the branch
+**`asr_refactorings`** (started from `main` on 2026-10-28; `asr_module` keeps
+the history up to the squash merge, PR #14).
 
 I have never run an ML model locally before. Explain setup steps, commands and
 errors in plain terms, and prefer simple, readable code over clever code.
@@ -70,21 +72,34 @@ errors in plain terms, and prefer simple, readable code over clever code.
 - **History:** the original standalone project (old recordings, earlier run
   outputs, retired Moonshine code) stays in Josias's local folder
   `Desktop\projects\asr-module`; it is not needed for further work.
+- **Rework from the team evaluation (2026-10-28,
+  `evaluations/asr/README.md` on main):** in this order, one commit each –
+  1. ✅ **Priority 3 – no normalization in ASR:** the `normalized` field is
+     gone; `text` = the words as heard (`clean_words`: sound-alike spellings
+     joined, `[unk]` dropped). `normalize.py` is for scoring only. Benchmark
+     unchanged (recall 0.986 / precision 0.986).
+  2. **Priority 1 – synonyms** in `vocab.py` `INTENT_TERMS` (table agreed
+     with Josias; not "wait" – sounds like "eight").
+  3. **Priority 2 – spoken delimiter** "execute" / "over" / "now" (only
+     after a command word; not "end" – sounds like "and"): Vosk partial
+     results per chunk, ASR removes the word and sends at once.
+  Check after each step: production config, `--runs 1`, existing clips only
+  (no new recordings).
 
 ## Setup (once per machine)
 ```powershell
 # from the repository root
 python -m venv .venv            # .venv/ is already gitignored
 .venv\Scripts\activate
-pip install -r src/asr/requirements.txt
+pip install -r requirements.txt
 ```
 - Developed with Python 3.11 (the repo README mentions 3.13; check that
   `vosk` and `faster-whisper` install there before switching).
 - Models: the engines download Whisper tiny.en and Vosk small into
   `src/asr/models/` (gitignored) on first use; after that everything runs
   offline. The Vosk engine adds `--dither=0` to the model config itself.
-- `src/asr/requirements.txt` is this module's pinned list; the root
-  `requirements.txt` (NLU, DSP) is shared – don't edit it without asking.
+- Since the merge to main there is no `src/asr/requirements.txt`; the root
+  `requirements.txt` is shared by all modules – don't edit it without asking.
 
 ## Goal
 Take the DSP's speech chunks, turn each utterance into text and emit **one
@@ -108,37 +123,41 @@ Pi 4.
 - **Determinism:** the same audio must give the same text.
 
 ## Scope
-ASR finds speech in the stream, turns it into text, applies vocabulary
-biasing (grammar / prompt sentence) and light text normalization (lowercase,
-punctuation, fillers, number words → digits). It does **not** classify
-intents, fill slots or canonicalize synonyms ("knife" → "scalpel" is NLU's
-job, `docs/COMMAND_SCHEMA_GUIDE.md` §3A). ASR must transcribe faithfully,
-including out-of-domain speech – never force speech into a command.
+ASR finds speech in the stream, turns it into text and applies vocabulary
+biasing (grammar / prompt sentence). It does **not** normalize (number
+words → digits, fillers, politeness: NLU's normalizer, since 2026-10-28),
+classify intents, fill slots or canonicalize synonyms ("knife" → "scalpel"
+is NLU's job, `docs/COMMAND_SCHEMA_GUIDE.md` §3A). ASR must transcribe
+faithfully, including out-of-domain speech – never force speech into a
+command.
 
 ## Output schema (contract with NLU – do not change without telling Khanh)
 One JSON object per detected utterance:
 ```json
 {
-  "text": "Zoom in two x, please.",
-  "normalized": "zoom in 2 x",
+  "text": "zoom in two x please",
   "confidence": 0.87,
   "language": "en",
   "words": [
-    {"word": "Zoom", "start": 0.12, "end": 0.40, "confidence": 0.95},
+    {"word": "zoom", "start": 0.12, "end": 0.40, "confidence": 0.95},
     {"word": "in",   "start": 0.40, "end": 0.52, "confidence": 0.93}
   ],
   "segment_start": 1726658793.12
 }
 ```
-- `text`: raw transcript exactly as the engine produced it (= `raw_transcript`
-  in the NLU schema).
-- `normalized`: `normalize(text, corrections=True, drop_politeness=True)`.
+- `text`: the words as heard (= `raw_transcript` in the NLU schema), not
+  normalized. Vosk: `clean_words` joins the grammar's sound-alike spellings
+  back ("hemo stat" → "hemostat", "c t" → "ct", "x ray" → "x-ray") and
+  drops `[unk]`; empty if only `[unk]` was heard. faster-whisper: its text
+  as it is (fallback only).
+- The `normalized` field was removed on 2026-10-28 (team evaluation,
+  "Priority 3"); NLU already read `text`.
 - `confidence`: 0–1 for the whole transcript. faster-whisper →
-  `exp(avg_logprob)`, null for empty output; Vosk → mean word confidence
-  without "[unk]", null if only "[unk]" was heard.
+  `exp(avg_logprob)`, null for empty output; Vosk → mean confidence of the
+  output words, null if `text` is empty.
 - `language`: fixed "en".
-- `words`: word timestamps in seconds relative to `segment_start`, with
-  per-word confidence.
+- `words`: the words of `text` with timestamps in seconds relative to
+  `segment_start` and per-word confidence.
 - `segment_start`: absolute start time of the utterance = capture time of the
   chunk where speech starts + offset within that chunk.
 - **Proposal to discuss with Khanh (not implemented):** add `segment_end`
@@ -200,7 +219,7 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
   "two" gave "go two slice"); plus single-word terms, number words, small
   words and softeners ("little", "bit", "could", "you", "okay").
   "hemostat" and "xray" are not in the model's dictionary -> "hemo stat" /
-  "x ray", `normalize()` joins them back.
+  "x ray", `clean_words()` in the engine joins them back.
 - Per-word confidence does not separate invented words cleanly ("two" vs
   "to" both 0.5) -> no confidence filter; NLU gets the per-word values.
 - Word times keep counting across `Reset()`; the engine shifts them back to
@@ -252,10 +271,9 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
 ```
 src/asr/
   CLAUDE.md            # this file
-  requirements.txt     # pinned dependencies of this module
   schema.py            # ASRResult / WordInfo + to_json() (output contract)
   audio.py             # load wav, downmix, resample to 16 kHz mono float32
-  normalize.py         # one normalize() for scoring + the JSON `normalized` field; CORRECTIONS
+  normalize.py         # one normalize() for scoring only (benchmark); CORRECTIONS ("+corr" rows)
   vocab.py             # terms per intent (schema), grammar words, prompt sentences, term metrics, leakage check
   metrics.py           # corpus WER, cluster bootstrap CI, paired differences
   bench_configs.py     # 6 configs + PRODUCTION_CONFIG = "vosk-grammar+freeform-log"
@@ -347,13 +365,11 @@ F. **Pull request** to `main` once it runs on the Pi. (Held-out recordings
   `docs/ASR_GUIDE.md` (header with `capture_time` + float32 bytes) and an
   `"end"` message when speech stops. Which beam if several speakers are
   detected?
-- **NLU (Khanh):** `segment_end` proposal; written forms we chose in
-  `normalized` (digits, "zoom in 2 x", "xray", "5 centimeters",
-  "15 degrees") OK?; verbatim free text for `log_event` OK?; handling of
-  `confidence: null` and of an empty `normalized` (Vosk grammar on
-  out-of-grammar speech: text "[unk]", normalized "", confidence null);
-  NLU binds the PULL socket at `SCRUB_ASR_ADDR`; who maintains the command
-  list?
+- **NLU (Khanh):** `segment_end` proposal; NLU's normalizer must now handle
+  number words itself (today "one hundred and twenty" -> "100 and 20", see
+  `docs/ASR_GUIDE.md` §3); the new synonyms (Priority 1) must be added to
+  NLU too; verbatim free text for `log_event` OK?; who maintains the
+  command list?
 - **Everyone:** is the 1 s budget for the whole chain or ASR alone? Memory
   left on the Pi next to DSP and NLU? Fallback: ASR on the workstation?
 
@@ -361,7 +377,7 @@ F. **Pull request** to `main` once it runs on the Pi. (Held-out recordings
 - Work in small steps. At the end of each phase, run the code and show me the
   output before moving on.
 - Explain any new tool, library or concept briefly the first time it appears.
-- Keep dependencies minimal and pinned in `src/asr/requirements.txt`.
+- Keep dependencies minimal (root `requirements.txt`, shared – ask first).
 - Use type hints, `pathlib`, and `argparse` for scripts; resolve paths from
   `Path(__file__)`.
 - Verify library APIs against the installed package source, not memory.
@@ -372,4 +388,4 @@ F. **Pull request** to `main` once it runs on the Pi. (Held-out recordings
 - Long runs: `python -u … > src/asr/results/run.log 2>&1` and tell me how to
   follow it; the laptop must stay awake.
 - Before trusting a number: `runs_differ` = 0 and dev/held-out kept apart.
-- Commit small, meaningful steps on `asr_module`; never push to `main`.
+- Commit small, meaningful steps on `asr_refactorings`; never push to `main`.

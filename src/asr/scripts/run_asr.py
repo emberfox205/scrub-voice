@@ -54,7 +54,7 @@ DEBUG_LOG_FILE = DEBUG_LOG_DIR / "asr_transcripts.jsonl"
 def log_result(result, seconds: float) -> None:
     words_detail = ", ".join(f"{w.word}:{w.confidence:.2f}" for w in result.words) if result.words else "none"
     logger.info(
-        f"{result.text!r} -> {result.normalized!r} (conf: {result.confidence}, {seconds:.2f}s) | Tokens: [{words_detail}]"
+        f"{result.text!r} (conf: {result.confidence}, {seconds:.2f}s) | Tokens: [{words_detail}]"
     )
     try:
         with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:

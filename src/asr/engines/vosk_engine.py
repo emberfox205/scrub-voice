@@ -1,10 +1,14 @@
 """Vosk engine: vosk-model-small-en-us-0.15, free-form or with a restricted
 grammar (see src/asr/CLAUDE.md "Engines to compare").
 
+Output text: the words as heard, without the grammar's artifacts ("[unk]",
+sound-alike spellings; `clean_words`) and without any normalization - NLU
+does that.
+
 Confidence: per-word `conf` is a real signal (it drops on words Vosk gets
-wrong); the transcript confidence is the mean word confidence, as src/asr/CLAUDE.md
-specifies for Vosk - without "[unk]" words, and null if only "[unk]" was
-heard.
+wrong); the transcript confidence is the mean confidence of the output
+words, as src/asr/CLAUDE.md specifies for Vosk - "[unk]" is not output, so
+it is null if only "[unk]" was heard.
 
 Setup choices, each found while benchmarking (details in docs/ASR_FINDINGS.md):
 - One loaded model per process. Loading a second `vosk.Model` after freeing
@@ -32,9 +36,8 @@ import requests
 import vosk
 
 from asr.audio import TARGET_SR
-from asr.normalize import normalize
 from asr.schema import ASRResult, WordInfo
-from asr.vocab import LOG_HEADER_WORDS, LOG_TRIGGERS
+from asr.vocab import LOG_HEADER_WORDS, LOG_TRIGGERS, SPOKEN_FORMS
 
 MODELS_DIR = Path(__file__).resolve().parents[1] / "models"  # src/asr/models (gitignored)
 MODEL_NAME = "vosk-model-small-en-us-0.15"
@@ -126,6 +129,37 @@ def splice_log_event(grammar_words: list[dict], free_words: list[dict]) -> list[
     return header + [w for w in free_words if (w["start"] + w["end"]) / 2 > header_end]
 
 
+# Sound-alike spellings the grammar uses for words missing from the model's
+# dictionary, back to the word: ("hemo", "stat") -> "hemostat",
+# ("x", "ray") -> "x-ray", ("c", "t") -> "ct".
+JOINED_FORMS = {tuple(spoken.split()): term.lower() for term, spoken in SPOKEN_FORMS.items()}
+
+
+def clean_words(vosk_words: list[dict]) -> list[dict]:
+    """The words as heard, without the grammar's artifacts: sound-alike
+    spellings are joined back into their word (NLU would not recognize
+    "hemo stat" or "c t"), and "[unk]" (speech outside the grammar) is
+    dropped - Vosk gives it conf 1.0, which would also inflate the
+    transcript confidence. A joined word spans its parts and keeps their
+    lowest confidence. Nothing else is changed: numbers stay words,
+    synonyms stay as said."""
+    out: list[dict] = []
+    i = 0
+    while i < len(vosk_words):
+        for spoken, word in JOINED_FORMS.items():
+            parts = vosk_words[i : i + len(spoken)]
+            if tuple(w["word"] for w in parts) == spoken:
+                out.append({"word": word, "start": parts[0]["start"], "end": parts[-1]["end"],
+                            "conf": min(w["conf"] for w in parts)})
+                i += len(spoken)
+                break
+        else:
+            if vosk_words[i]["word"] != "[unk]":
+                out.append(vosk_words[i])
+            i += 1
+    return out
+
+
 class VoskEngine:
     name = "vosk"
 
@@ -166,20 +200,14 @@ class VoskEngine:
         if self.freeform is not None and _starts_log_event(vosk_words):
             vosk_words = splice_log_event(vosk_words, self.freeform.decode(pcm))
 
-        # Vosk's own "text" is these words joined by spaces.
-        text = " ".join(w["word"] for w in vosk_words)
         words = [
             WordInfo(word=w["word"], start=w["start"], end=w["end"], confidence=w["conf"])
-            for w in vosk_words
+            for w in clean_words(vosk_words)
         ]
-        # "[unk]" (speech outside the grammar) gets conf 1.0 from Vosk, so an
-        # utterance of only "[unk]" would claim full confidence: leave it out.
-        recognized = [w.confidence for w in words if w.word != "[unk]"]
-        confidence = float(np.mean(recognized)) if recognized else None
+        confidence = float(np.mean([w.confidence for w in words])) if words else None
 
         return ASRResult(
-            text=text,
-            normalized=normalize(text, corrections=True, drop_politeness=True),
+            text=" ".join(w.word for w in words),  # empty if only "[unk]" was heard
             confidence=confidence,
             language="en",
             words=words,

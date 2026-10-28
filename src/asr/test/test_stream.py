@@ -28,7 +28,7 @@ class FakeEngine:
     def transcribe(self, audio, sr=16000):
         self.calls.append(audio)
         words = [WordInfo("zoom", 0.3, 0.6, 0.9), WordInfo("in", 0.6, 0.8, 0.8)]
-        return ASRResult("zoom in", "zoom in", 0.85, "en", words, segment_start=0.0)
+        return ASRResult("zoom in", 0.85, "en", words, segment_start=0.0)
 
 
 def chunk(value: float = 0.1) -> np.ndarray:

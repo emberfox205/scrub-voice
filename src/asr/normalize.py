@@ -1,13 +1,13 @@
-"""Text normalization, used identically on reference and hypothesis for
-scoring. The raw `text` an engine produced is never changed; this only
-builds the cleaned version.
+"""Text normalization for scoring only (benchmark), used identically on
+reference and hypothesis. It is not applied to what ASR sends: NLU gets the
+transcript as heard and is the only stage that normalizes (decision
+2026-10-28, evaluations/asr/README.md "Priority 3").
 
 Steps: lowercase, drop Vosk's "[unk]" marker, split hyphens, strip
 punctuation (decimal points between digits are kept), split units off
 numbers ("2x" -> "2 x"), number words -> digits, one written form per word
-(spellings), drop fillers. Politeness words ("please", "thanks") are kept
-for scoring - a dropped "please" counts as an error - but can be dropped for
-the JSON `normalized` field ("Zoom in two x, please." -> "zoom in 2 x").
+(spellings), drop fillers. Politeness words ("please", "thanks") are kept -
+a dropped "please" counts as an error.
 
 Synonyms are NOT mapped here ("knife" stays "knife"): that is the language
 understanding stage's job (docs/COMMAND_SCHEMA_GUIDE.md, section 3A).
@@ -44,9 +44,12 @@ SPELLINGS = {
 # Number followed directly by a unit, as Whisper writes it: "2x", "1.5x", "5cm".
 NUMBER_UNIT = re.compile(r"\b(\d+(?:\.\d+)?)(x|cm)\b")
 FILLERS = {"uh", "uhh", "um", "umm", "uhm", "er", "erm", "hmm", "hm", "mm"}
-POLITENESS = {"please", "thanks"}
 
-# Post-correction map: (regex on normalized text, replacement). Built from
+# Post-correction map: (regex on normalized text, replacement). Benchmark
+# only (the "+corr" rows): it shows what fixing these mishearings would gain,
+# but nothing sent to NLU is corrected. The errors are Whisper's; the Vosk
+# grammar cannot produce them outside log_event free text (2026-10-28: the
+# "+corr" rows of the production config equal the plain ones). Built from
 # errors on the dev set only (Phase B, 2026-10-16; which engine made each
 # error: docs/ASR_FINDINGS.md). Only mishearings of command words, and only
 # phrases that would almost never be meant literally in an operating room,
@@ -179,11 +182,6 @@ def drop_fillers(tokens: list[str]) -> list[str]:
     return [t for t in tokens if t not in FILLERS]
 
 
-def drop_politeness_words(tokens: list[str]) -> list[str]:
-    joined = re.sub(r"\bthank you\b", " ", " ".join(tokens))
-    return [t for t in joined.split() if t not in POLITENESS]
-
-
 def apply_corrections(tokens: list[str]) -> list[str]:
     joined = " ".join(tokens)
     for pattern, replacement in CORRECTIONS:
@@ -191,15 +189,13 @@ def apply_corrections(tokens: list[str]) -> list[str]:
     return joined.split()
 
 
-def normalize(text: str, *, corrections: bool = False, drop_politeness: bool = False) -> str:
-    """Scoring uses the defaults (applied to reference and hypothesis alike).
-    The JSON `normalized` field uses corrections=True, drop_politeness=True."""
+def normalize(text: str, *, corrections: bool = False) -> str:
+    """Applied to reference and hypothesis alike. corrections=True gives the
+    benchmark's "+corr" rows."""
     tokens = strip_punctuation(text).split()
     tokens = words_to_digits(tokens)
     tokens = canonicalize_spellings(tokens)
     tokens = drop_fillers(tokens)
     if corrections:
         tokens = apply_corrections(tokens)
-    if drop_politeness:
-        tokens = drop_politeness_words(tokens)
     return " ".join(tokens)

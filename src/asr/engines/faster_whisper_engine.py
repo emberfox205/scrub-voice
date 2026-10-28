@@ -18,7 +18,6 @@ from typing import Optional
 import numpy as np
 from faster_whisper import WhisperModel
 
-from asr.normalize import normalize
 from asr.schema import ASRResult, WordInfo
 
 MODELS_DIR = Path(__file__).resolve().parents[1] / "models"  # src/asr/models (gitignored)
@@ -73,7 +72,6 @@ class FasterWhisperEngine:
 
         return ASRResult(
             text=text,
-            normalized=normalize(text, corrections=True, drop_politeness=True),
             confidence=confidence,
             language=info.language,
             words=words,
