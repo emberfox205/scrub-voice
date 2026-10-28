@@ -84,6 +84,8 @@ class DASBeamformer:
         Returns:
             Masked complex STFT tensor of shape (num_targets, num_freqs, num_frames)
         """
+        num_targets = Y_stft.shape[0]
+        
         # Shape: (num_targets, num_freqs, num_frames)
         beam_power = np.abs(Y_stft) ** 2
 
