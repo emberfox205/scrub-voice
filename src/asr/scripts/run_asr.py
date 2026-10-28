@@ -8,8 +8,9 @@ Two modes, from the repository root:
     python src/asr/scripts/run_asr.py
 
     # Simulation (no microphone array needed): wav files are cut into 0.5 s
-    # chunks, and only chunks with speech are passed on - like the DSP does.
-    # Several files are played one after the other as one stream.
+    # chunks, and only chunks with speech are passed on - decided by the
+    # DSP's own speech detector (needs torch). Several files are played one
+    # after the other as one stream.
     python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav
 
     # Same, but also send the results to NLU (played in real time, so the
@@ -74,18 +75,18 @@ def open_push(asr_addr: str):
 
 def simulate(stream: UtteranceStream, wav_paths: list[Path], push=None) -> None:
     """Play wav files as a DSP chunk stream and print one JSON line per
-    utterance. Speech chunks are found with the Silero voice detector that
-    ships with faster-whisper (the DSP uses Silero too).
+    utterance. Which chunks are speech is decided by the DSP's own detector
+    (src/dsp/source/vad.py, Silero), chunk by chunk with the same rule as
+    src/dsp/run_dsp.py. It needs torch; the Silero model downloads once
+    (torch.hub, internet), then it runs offline.
 
     With a push socket, every result is also sent to NLU, and the files are
     played in real time: otherwise segment_start would lie in the future and
     NLU's latency would come out negative."""
-    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    from dsp.source.vad import SileroVAD
 
+    vad = SileroVAD(sample_rate=TARGET_SR)
     audio = np.concatenate([load_audio(p) for p in wav_paths])
-    # Short min silence: the DSP decides chunk by chunk and does not glue
-    # speech across pauses (Silero's default would join pauses under 2 s).
-    speech = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=100, speech_pad_ms=0))
     chunk_len = int(CHUNK_S * TARGET_SR)
     clock = time.time()  # simulated capture time of the first chunk
 
@@ -99,10 +100,11 @@ def simulate(stream: UtteranceStream, wav_paths: list[Path], push=None) -> None:
     for i in range(0, len(audio) - chunk_len + 1, chunk_len):
         if push is not None:  # real time: wait until this chunk would be recorded completely
             time.sleep(max(0.0, clock + (i + chunk_len) / TARGET_SR - time.time()))
-        has_speech = any(s["start"] < i + chunk_len and s["end"] > i for s in speech)
+        chunk = audio[i : i + chunk_len]
+        has_speech = vad.is_speech_active(chunk)
         started = time.perf_counter()
         if has_speech:
-            finish(stream.feed(audio[i : i + chunk_len], clock + i / TARGET_SR), started)
+            finish(stream.feed(chunk, clock + i / TARGET_SR), started)
         else:
             finish(stream.end_utterance(), started)  # the DSP stops sending: speech is over
     started = time.perf_counter()

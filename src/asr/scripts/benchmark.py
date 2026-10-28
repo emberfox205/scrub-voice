@@ -1,4 +1,6 @@
-"""Benchmark every engine config on the clip sets and score the results.
+"""Benchmark the Vosk setups (asr/bench_configs.py) on the clip sets and
+score the results. Since the engine decision this is a regression check
+after vocabulary changes: `--configs vosk-grammar+freeform-log --runs 1`.
 
 Run from the repository root:
     python src/asr/scripts/benchmark.py
@@ -40,7 +42,7 @@ sys.path.insert(0, str(SRC_DIR))
 from asr.bench_configs import CONFIGS
 from asr.metrics import bootstrap_ci, clip_errors, cluster_resamples, corpus_wer
 from asr.normalize import normalize
-from asr.vocab import check_all_biasing_leakage, cluster_key, term_counts
+from asr.vocab import check_grammar_leakage, cluster_key, term_counts
 
 RESULTS_DIR = ASR_DIR / "results"
 RAW_DIR = RESULTS_DIR / "raw"
@@ -62,7 +64,7 @@ SUMMARY_FIELDS = [
 
 def machine_info() -> dict:
     versions = {}
-    for pkg in ["faster-whisper", "ctranslate2", "vosk", "numpy", "jiwer"]:
+    for pkg in ["vosk", "numpy", "jiwer"]:
         try:
             versions[pkg] = metadata.version(pkg)
         except metadata.PackageNotFoundError:
@@ -156,9 +158,9 @@ def run_config(name: str, clips: list[dict], runs: int) -> bool:
     return True
 
 
-def score_clip(clip: dict, corrections: bool = False) -> dict:
-    ref_norm = normalize(clip["reference_text"], corrections=corrections)
-    hyp_norm = normalize(clip["hypothesis_text"], corrections=corrections)
+def score_clip(clip: dict) -> dict:
+    ref_norm = normalize(clip["reference_text"])
+    hyp_norm = normalize(clip["hypothesis_text"])
     errors, ref_words = clip_errors(ref_norm, hyp_norm)
     said, output, matched = term_counts(ref_norm, hyp_norm)
     return {
@@ -343,7 +345,7 @@ def main() -> None:
     if not dev_clips:
         sys.exit("No dev clips yet - record data/asr/prompts/commands_dev.txt first "
                  "(src/asr/scripts/record_testset.py, see src/asr/CLAUDE.md Phase B).")
-    check_all_biasing_leakage([c["reference_text"] for c in dev_clips])
+    check_grammar_leakage([c["reference_text"] for c in dev_clips])
     clusters = [cluster_key(c["notes"], normalize(c["reference_text"])) for c in dev_clips]
     resamples = cluster_resamples(clusters, n=args.bootstrap, seed=0)
     print(f"Bootstrap: {args.bootstrap} resamples over {len(set(clusters))} command groups "
@@ -362,15 +364,10 @@ def main() -> None:
         raw = json.loads(raw_path.read_text(encoding="utf-8"))
         wanted_sets = set(set_names)
         field_rows.append(output_fields(name, raw))
-        # Every config also gets a "+corr" row: same transcripts, scored with
-        # the post-correction map (asr/normalize.py) - no extra inference.
-        # NLU never gets corrected text; the row only shows what the map gains.
-        variants = [(name, False), (f"{name}+corr", True)]
-        for label, corrections in variants:
-            scored = [score_clip(c, corrections) for c in raw["clips"] if c["set"] in wanted_sets]
-            summaries.append(summarize(label, raw, scored, resamples))
-            per_clip_rows.extend({"config": label, **c} for c in scored)
-            write_errors_file(label, scored)
+        scored = [score_clip(c) for c in raw["clips"] if c["set"] in wanted_sets]
+        summaries.append(summarize(name, raw, scored, resamples))
+        per_clip_rows.extend({"config": name, **c} for c in scored)
+        write_errors_file(name, scored)
 
     if not summaries:
         sys.exit("Nothing to score.")

@@ -130,6 +130,12 @@ no new recordings.
 - The correction list (19 known mishearings) is no longer applied to what
   NLU gets. Its mistakes are Whisper's; with the Vosk grammar it changed
   nothing (scores with and without it were equal).
+- Later the same day: **Vosk only.** The Whisper engine, its prompt
+  sentences, the correction list and Whisper's spelling rules in the
+  scoring were removed from the code (results above and below stay as
+  history). The `--wav` simulation now picks speech chunks with the audio
+  front end's own detector instead of the one that came with Whisper.
+  Benchmark unchanged.
 
 ### 2. More words for the same commands (evaluation "Priority 1") – done
 Grammar: 115 → 157 entries (119 → 159 words). Added, from NLU's training

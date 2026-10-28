@@ -19,13 +19,17 @@ CHUNK = 8000  # 0.5 s
 
 
 class FakeEngine:
-    """Records what it was given; "hears" one word starting at 0.3 s."""
+    """Like the Vosk engine, fed chunk by chunk (no delimiter heard);
+    records each finished utterance and "hears" one word at 0.3 s."""
     name = "fake"
 
     def __init__(self):
         self.calls: list[np.ndarray] = []
 
-    def transcribe(self, audio, sr=16000):
+    def accept_chunk(self, chunk):
+        return ["zoom"]
+
+    def finish(self, audio):
         self.calls.append(audio)
         words = [WordInfo("zoom", 0.3, 0.6, 0.9), WordInfo("in", 0.6, 0.8, 0.8)]
         return ASRResult("zoom in", 0.85, "en", words, segment_start=0.0)
@@ -86,16 +90,11 @@ class UtteranceStreamTest(unittest.TestCase):
         stream.feed(chunk(), 100.0)
         self.assertEqual(stream.feed(chunk(), 100.5).end_reason, "max_length")
 
-    def test_non_streaming_engine_ignores_delimiters(self):
-        # The fake engine has no accept_chunk (like Whisper): only the end counts.
-        self.assertIsNone(self.stream.feed(chunk(), 100.0))
-        self.assertEqual(self.engine.calls, [])
 
-
-class FakeStreamingEngine:
-    """Like Vosk: takes chunks one by one; "hears" the scripted partial
-    results, one per chunk."""
-    name = "fake-streaming"
+class ScriptedEngine:
+    """Like the Vosk engine; "hears" the scripted partial results, one per
+    chunk."""
+    name = "scripted"
 
     def __init__(self, partials: list[str]):
         self.partials = [p.split() for p in partials]
@@ -111,13 +110,10 @@ class FakeStreamingEngine:
         self.finished.append(len(audio))
         return ASRResult("next slice", 0.9, "en", [WordInfo("next", 0.1, 0.4, 0.9)], segment_start=0.0)
 
-    def transcribe(self, audio, sr=16000):
-        raise AssertionError("a streaming engine is fed chunk by chunk")
-
 
 class DelimiterTest(unittest.TestCase):
     def test_delimiter_after_a_command_sends_at_once(self):
-        engine = FakeStreamingEngine(["next", "next slice now", "zoom"])
+        engine = ScriptedEngine(["next", "next slice now", "zoom"])
         stream = UtteranceStream(engine)
         self.assertIsNone(stream.feed(chunk(), 100.0))
         result = stream.feed(chunk(), 100.5)  # no DSP "end" needed
@@ -132,7 +128,7 @@ class DelimiterTest(unittest.TestCase):
     def test_delimiter_without_command_does_not_end(self):
         for partials in (["now"], ["[unk] over"], ["now zoom"], ["[unk] five now"]):
             with self.subTest(partials=partials):
-                stream = UtteranceStream(FakeStreamingEngine(partials))
+                stream = UtteranceStream(ScriptedEngine(partials))
                 self.assertIsNone(stream.feed(chunk(), 100.0))
                 self.assertTrue(stream.has_audio())
 

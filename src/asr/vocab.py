@@ -108,28 +108,6 @@ GRAMMAR_CONTEXT_WORDS = ["patient", "active", "current", "immediately", "robotic
 # (ends_with_delimiter); the engine removes the word from the output.
 DELIMITERS = ["execute", "over", "now"]
 
-# One natural sentence with the key terms, for Whisper's initial_prompt (it
-# nudges spelling and word choice toward these terms). Written from the
-# schema guide, avoiding the exact test sentences. Numbers are written as
-# digits so Whisper writes digits too.
-WHISPER_PROMPT = (
-    "During surgery the team asks the robot to pass the scalpel, knife, ten blade, "
-    "Metzenbaum or iris scissors, hemostat, clamp, snap, forceps, tweezers or pickups, "
-    "to park, retract or standby the arm, to halt, freeze, stop or back off in an emergency, "
-    "to open, show, display, close or dismiss the CT, MRI or X-ray scan in the viewer, "
-    "to zoom in or out by 2.5x or magnify, to step to the next, previous or a numbered slice, "
-    "to log an event or record a milestone with a note or comment, "
-    "and to move or tilt the camera left, right, up, down, forward or backward "
-    "by 7 cm or 20 degrees, then reset or center it at home."
-)
-
-# A shorter variant to measure the latency cost of the prompt (Phase B):
-# only the terms Whisper is most likely to misspell or mishear.
-WHISPER_PROMPT_SHORT = (
-    "The robot passes the scalpel, Metzenbaum scissors, hemostat, forceps or pickups, "
-    "opens the CT, MRI or X-ray scan, zooms, magnifies, logs a milestone and tilts the camera."
-)
-
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _TERMS = sorted({tuple(normalize(t).split()) for t in COMMAND_VOCAB}, key=len, reverse=True)
 
@@ -155,11 +133,10 @@ def vosk_grammar_phrases() -> list[str]:
 
 
 def check_leakage(texts: list[str], references: list[str], what: str) -> None:
-    """Fail if a test sentence appears (as a whole phrase) in any biasing
-    text: grammar phrases or the prompt sentence. References that are
-    themselves a single vocab term ("Freeze", "Back off") are allowed - they
-    are in the vocabulary because they are commands, not because of the test
-    set."""
+    """Fail if a test sentence appears (as a whole phrase) in any of the
+    texts. References that are themselves a single vocab term ("Freeze",
+    "Back off") are allowed - they are in the vocabulary because they are
+    commands, not because of the test set."""
     vocab = {normalize(t) for t in COMMAND_VOCAB}
     padded = [f" {normalize(t)} " for t in texts]
     leaked = sorted({
@@ -169,12 +146,10 @@ def check_leakage(texts: list[str], references: list[str], what: str) -> None:
     assert not leaked, f"Test-set sentences found verbatim in the {what}: {leaked}"
 
 
-def check_all_biasing_leakage(references: list[str]) -> None:
+def check_grammar_leakage(references: list[str]) -> None:
     # The grammar is checked entry by entry: joining its entries would glue
     # neighbours into phrases nobody wrote.
     check_leakage(vosk_grammar_phrases(), references, "Vosk grammar")
-    check_leakage([WHISPER_PROMPT], references, "Whisper prompt")
-    check_leakage([WHISPER_PROMPT_SHORT], references, "short Whisper prompt")
 
 
 def find_terms(normalized_text: str) -> list[str]:

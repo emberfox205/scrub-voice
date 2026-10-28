@@ -11,8 +11,8 @@ sys.path.insert(0, str(SRC_DIR))  # src/ on sys.path, like the scripts
 
 from asr.normalize import normalize
 from asr.vocab import (
-    COMMAND_VOCAB, INTENT_TERMS, SPOKEN_FORMS, WHISPER_PROMPT, WHISPER_PROMPT_SHORT,
-    check_all_biasing_leakage, check_leakage, cluster_key, ends_with_delimiter, find_terms, term_counts,
+    COMMAND_VOCAB, INTENT_TERMS, SPOKEN_FORMS,
+    check_grammar_leakage, check_leakage, cluster_key, ends_with_delimiter, find_terms, term_counts,
     vosk_grammar_phrases,
 )
 
@@ -87,20 +87,14 @@ class VocabularyTest(unittest.TestCase):
         self.assertEqual(find_terms(normalize("The patient is stable")), [])
         self.assertEqual(find_terms(normalize("Bring up the patient CT")), ["bring up", "ct"])
 
-    def test_no_test_sentence_in_any_biasing_text(self):
+    def test_no_test_sentence_in_the_grammar(self):
         # Stricter than the benchmark (dev only): held-out and non-command too.
-        check_all_biasing_leakage(ALL_TEST_PHRASES)
+        check_grammar_leakage(ALL_TEST_PHRASES)
 
     def test_leakage_check_catches_a_leak(self):
         with self.assertRaises(AssertionError):
             check_leakage(["we go to slice forty five now"], ["Go to slice 45"], "test")
         check_leakage(["freeze"], ["Freeze"], "test")  # a single term is allowed
-
-    def test_prompts_contain_the_hard_terms(self):
-        for prompt in (WHISPER_PROMPT, WHISPER_PROMPT_SHORT):
-            for term in ["scalpel", "Metzenbaum", "hemostat", "forceps", "CT", "MRI", "X-ray"]:
-                with self.subTest(term=term):
-                    self.assertIn(term, prompt)
 
 
 class TermMetricsTest(unittest.TestCase):
@@ -118,7 +112,7 @@ class TermMetricsTest(unittest.TestCase):
         self.assertEqual(find_terms(normalize("How was your weekend")), [])
 
     def test_wrong_number_counts_as_missed_and_invented(self):
-        ref, hyp = normalize("Zoom in two x"), normalize("zoom in 3x")
+        ref, hyp = normalize("Zoom in two x"), normalize("zoom in three x")
         self.assertEqual(term_counts(ref, hyp), (2, 2, 1))
 
     def test_every_vocab_term_is_found_in_itself(self):

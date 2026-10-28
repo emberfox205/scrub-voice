@@ -44,7 +44,11 @@ errors in plain terms, and prefer simple, readable code over clever code.
   commands fully right, recall 0.986 / precision 0.986, 0.07 s per clip,
   261 MB. Weakness: forces everyday speech into command words ("a bit
   late" -> "blade"). Overview of all engines and the reasons:
-  `docs/ASR_FINDINGS.md` "Decision". Whisper code stays as a fallback only.
+  `docs/ASR_FINDINGS.md` "Decision".
+- **Vosk only (2026-10-28):** the benchmark phase is over. Whisper code,
+  its prompt sentences and the correction list (Whisper's mishearings) were
+  removed – **don't write or adapt code for other engines.** The benchmark
+  stays as a regression check for the Vosk setups.
 - **Done (2026-10-16):** streaming entry point `stream.py` + service
   `scripts/run_asr.py` (ZeroMQ in from DSP, out to NLU), interface guide for
   the team: `docs/ASR_GUIDE.md`.
@@ -107,10 +111,14 @@ python -m venv .venv            # .venv/ is already gitignored
 pip install -r requirements.txt
 ```
 - Developed with Python 3.11 (the repo README mentions 3.13; check that
-  `vosk` and `faster-whisper` install there before switching).
-- Models: the engines download Whisper tiny.en and Vosk small into
-  `src/asr/models/` (gitignored) on first use; after that everything runs
-  offline. The Vosk engine adds `--dither=0` to the model config itself.
+  `vosk` installs there before switching).
+- Model: the engine downloads Vosk small into `src/asr/models/`
+  (gitignored) on first use; after that everything runs offline. The Vosk
+  engine adds `--dither=0` to the model config itself.
+- The `--wav` simulation uses the DSP's speech detector, which needs torch
+  (in the root `requirements.txt`; CPU build:
+  `pip install torch --index-url https://download.pytorch.org/whl/cpu`).
+  Its Silero model downloads once from GitHub (torch.hub cache).
 - Since the merge to main there is no `src/asr/requirements.txt`; the root
   `requirements.txt` is shared by all modules – don't edit it without asking.
 
@@ -138,7 +146,7 @@ Pi 4.
 
 ## Scope
 ASR finds speech in the stream, turns it into text and applies vocabulary
-biasing (grammar / prompt sentence). It does **not** normalize (number
+biasing (the Vosk grammar). It does **not** normalize (number
 words → digits, fillers, politeness: NLU's normalizer, since 2026-10-28),
 classify intents, fill slots or canonicalize synonyms ("knife" → "scalpel"
 is NLU's job, `docs/COMMAND_SCHEMA_GUIDE.md` §3A). ASR must transcribe
@@ -156,19 +164,18 @@ One JSON object per detected utterance:
     {"word": "zoom", "start": 0.12, "end": 0.40, "confidence": 0.95},
     {"word": "in",   "start": 0.40, "end": 0.52, "confidence": 0.93}
   ],
-  "segment_start": 1726658793.12
+  "segment_start": 1726658793.12,
+  "end_reason": "dsp_end"
 }
 ```
 - `text`: the words as heard (= `raw_transcript` in the NLU schema), not
-  normalized. Vosk: `clean_words` joins the grammar's sound-alike spellings
-  back ("hemo stat" → "hemostat", "c t" → "ct", "x ray" → "x-ray") and
-  drops `[unk]`; empty if only `[unk]` was heard. faster-whisper: its text
-  as it is (fallback only).
+  normalized. `clean_words` joins the grammar's sound-alike spellings back
+  ("hemo stat" → "hemostat", "c t" → "ct", "x ray" → "x-ray") and drops
+  `[unk]`; empty if only `[unk]` was heard.
 - The `normalized` field was removed on 2026-10-28 (team evaluation,
   "Priority 3"); NLU already read `text`.
-- `confidence`: 0–1 for the whole transcript. faster-whisper →
-  `exp(avg_logprob)`, null for empty output; Vosk → mean confidence of the
-  output words, null if `text` is empty.
+- `confidence`: 0–1, mean confidence of the output words; null if `text`
+  is empty.
 - `language`: fixed "en".
 - `words`: the words of `text` with timestamps in seconds relative to
   `segment_start` and per-word confidence.
@@ -212,27 +219,22 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
    the grammar hears "log"/"record" among the first three words, a free-form
    recognizer (same model) decodes the same audio; the header ("log event")
    comes from the grammar, the words after it from the free-form result.
-   Whisper needs nothing special. Phase B: the free-form pass runs only
-   after a full header ("log event", "record milestone"); otherwise the
-   free-form text is used as it is ("Hello" had become "log"). Neither
-   engine gets medical free text right ("hepatic" -> "have pet take" /
-   "heptic"); NLU stores it verbatim.
-2. **Numbers:** done. `words_to_digits` handles "one hundred (and) twenty" →
-   120 and "one point five" → 1.5; Whisper's "1.5x" keeps its decimal point
-   and is split to "1.5 x". **Written forms chosen (to confirm with Khanh):**
-   digits; factor "2 x" (a separate "x" token); "xray"; "centimeters" (also
-   for "cm"); "degrees" (also for "°").
+   Phase B: the free-form pass runs only after a full header ("log event",
+   "record milestone"); otherwise the free-form text is used as it is
+   ("Hello" had become "log"). Medical free text is often wrong ("hepatic"
+   -> "have pet take"); NLU stores it verbatim.
+2. **Numbers:** ASR writes them as words; NLU turns them into digits
+   (since 2026-10-28). `normalize.words_to_digits` ("one hundred (and)
+   twenty" → 120, "one point five" → 1.5) is only used for scoring.
 3. **Emergency commands are safety-critical:** recognise them when repeated,
    in noise, and with the lowest latency. Idea: Vosk partial results can spot
    "emergency stop" / "halt" / "freeze" before the end-of-utterance wait.
 4. **Synonyms:** recognise every synonym in the guide; NLU maps them.
-5. **Correction list:** 19 rules from dev errors (Phase B), command words
-   only. Never add phrases that can be meant literally ("close skin",
-   "scope"); `test_no_test_phrase_is_changed` checks that no sentence in the
-   phrase lists is altered.
+5. **No correction list** (removed 2026-10-28): its 19 rules fixed
+   Whisper's mishearings and changed nothing on Vosk output.
 
-## Engines (current setups – keep these settings)
-**1. Vosk** – `vosk-model-small-en-us-0.15` (`engines/vosk_engine.py`)
+## Engine: Vosk (keep these settings)
+`vosk-model-small-en-us-0.15` (`engines/vosk_engine.py`)
 - Command grammar built only from `vocab.py`, plus `[unk]`. A Vosk grammar
   accepts any sequence of its entries, but entries also teach it which
   words follow each other: multi-word terms ("go to", "back off", "zoom
@@ -251,22 +253,10 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
   recognizer per clip cost ~0.5 s.
 - One `vosk.Model` per process – loading a second after freeing one
   segfaults.
-- Streams natively: `AcceptWaveform(chunk)` returns True at end of utterance
-  (endpoint rules in the model's `model.conf`), partial results available.
-
-**2. faster-whisper tiny.en** – int8, CPU (`engines/faster_whisper_engine.py`)
-- Beam 1, `initial_prompt` = one natural sentence with the key terms (must not
-  contain test sentences), `language="en"`, `temperature=0`,
-  `condition_on_previous_text=False`, `word_timestamps=True`.
-- Not streaming: needs our voice activity detection to cut utterances.
-- Says "you" on pure noise without the prompt.
-- **Cutting matters (Phase B):** a tight cut (0.3 s after the speech) adds
-  junk words ("thank you", "good"): WER 0.08 -> 0.18. Appending 0.6-2 s of
-  **digital silence** (zeros) after a tight cut fixes it (WER 0.077) at no
-  waiting cost; appended room noise makes it far worse (WER 0.50). Keep
-  >= 0.4 s before the speech (0.2 s lost "hand" in "hand scalpel").
-- Short prompt (`WHISPER_PROMPT_SHORT`): 0.42 s per clip, same as no prompt;
-  the long one took 0.78 s. No hot words.
+- Streams natively: fed chunk by chunk (`accept_chunk`, whole 0.2 s steps),
+  partial results after each chunk. `AcceptWaveform` returns True when Vosk
+  guesses the utterance is over (endpoint rules in `model.conf`) – ignored;
+  the stream decides.
 
 ## Utterances from the DSP stream (implemented, `stream.py`)
 - `UtteranceStream(engine)`: `feed(chunk, capture_time)` collects speech
@@ -274,13 +264,13 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
   ("keyword"), DSP "end", a capture-time gap > 0.25 s, the service's
   timeout, or 15 s (`end_reason`). Vosk gets each chunk as it arrives
   (whole 0.2 s steps) and its result equals transcribing in one go, so the
-  benchmark → measured accuracy holds. Whisper still gets the whole
-  utterance. `segment_start` = first chunk's capture time + first word's
-  start; word times relative to it.
+  benchmark → measured accuracy holds. `segment_start` = first chunk's
+  capture time + first word's start; word times relative to it.
 - `scripts/run_asr.py`: ZeroMQ service (binds PULL `SCRUB_AUDIO_ADDR`,
   connects PUSH `SCRUB_ASR_ADDR`, `ipc:///tmp/...` defaults like
-  `src/orchestrator/`) or `--wav` simulation (Silero from faster-whisper
-  marks speech chunks, like the DSP).
+  `src/orchestrator/`) or `--wav` simulation (the DSP's own detector,
+  `src/dsp/source/vad.py`, marks speech chunks with the same per-chunk rule
+  as `run_dsp.py`; needs torch).
 - Measured (laptop, fake DSP over ZeroMQ): JSON 0.03 s after a DSP "end"
   message, 0.94 s when relying on the timeout → DSP should send "end".
 - End of speech → NLU measured 0.6–1.0 s with whole 0.5 s chunks (ASR's
@@ -299,12 +289,12 @@ src/asr/
   CLAUDE.md            # this file
   schema.py            # ASRResult / WordInfo + to_json() (output contract)
   audio.py             # load wav, downmix, resample to 16 kHz mono float32
-  normalize.py         # one normalize() for scoring only (benchmark); CORRECTIONS ("+corr" rows)
-  vocab.py             # terms per intent (schema), grammar words, prompt sentences, term metrics, leakage check
+  normalize.py         # one normalize() for scoring only (benchmark)
+  vocab.py             # terms per intent (schema), grammar words, delimiters, term metrics, leakage check
   metrics.py           # corpus WER, cluster bootstrap CI, paired differences
-  bench_configs.py     # 6 configs + PRODUCTION_CONFIG = "vosk-grammar+freeform-log"
+  bench_configs.py     # 3 Vosk setups + PRODUCTION_CONFIG = "vosk-grammar+freeform-log"
   stream.py            # UtteranceStream: DSP speech chunks in, one ASRResult per utterance out
-  engines/             # base.py, faster_whisper_engine.py, vosk_engine.py
+  engines/             # vosk_engine.py (the only engine)
   test/                # unit tests (python -m unittest discover -s src/asr/test -v)
   scripts/
     record_testset.py  # record a phrase list -> data/asr/<list>/ + manifest (--redo "<phrase>")
@@ -337,7 +327,7 @@ python src/asr/scripts/run_asr.py                                             # 
 python src/asr/scripts/transcribe.py data/asr/sample_01.wav
 python src/asr/scripts/record_testset.py --speaker <name> --prompts-file data/asr/prompts/commands_dev.txt
 python src/asr/scripts/make_noise_clips.py
-python src/asr/scripts/benchmark.py --configs vosk-grammar --runs 1           # quick check
+python src/asr/scripts/benchmark.py --configs vosk-grammar+freeform-log --runs 1   # quick check after a change
 python -u src/asr/scripts/benchmark.py > src/asr/results/run.log 2>&1         # full run
 Get-Content src\asr\results\run.log -Wait                                     # follow it
 python src/asr/scripts/benchmark.py --score-only                              # rescore, no inference
@@ -367,8 +357,8 @@ only after recording (Phase B); until then the benchmark stops with a message.
   Timing from a busy machine is misleading (Phase B: 0.79 s vs 0.42 s).
 - **Dev vs held-out:** tune only on `commands_dev`; run `commands_heldout` once
   at the end. Until then, label results "dev set".
-- Grammar and prompt sentence must never contain test sentences
-  (`check_leakage` asserts this).
+- The grammar must never contain test sentences (`check_grammar_leakage`
+  asserts this).
 
 ## Next phases
 A. ✅ **Vocabulary from the schema** (done 2026-10-14): `vocab.py`,

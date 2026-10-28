@@ -27,18 +27,10 @@ from asr.metrics import cluster_resamples, paired_diff_ci
 from asr.vocab import cluster_key
 
 DEFAULT_PAIRS = [
-    # vocabulary help vs the same engine without it
-    ("faster-whisper-tiny.en-beam1+prompt", "faster-whisper-tiny.en-beam1"),
+    # the grammar vs the same engine without it
     ("vosk-grammar", "vosk-freeform"),
-    # shorter prompt (faster) vs the full prompt
-    ("faster-whisper-tiny.en-beam1+shortprompt", "faster-whisper-tiny.en-beam1+prompt"),
     # free-form recognizer for log_event free text vs grammar alone
     ("vosk-grammar+freeform-log", "vosk-grammar"),
-    # post-correction list vs none
-    ("faster-whisper-tiny.en-beam1+corr", "faster-whisper-tiny.en-beam1"),
-    ("vosk-freeform+corr", "vosk-freeform"),
-    # the two shortlisted setups head to head
-    ("vosk-grammar", "faster-whisper-tiny.en-beam1+prompt"),
 ]
 
 

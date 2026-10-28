@@ -135,7 +135,9 @@ pip install -r requirements.txt                       # model downloads on first
 # service (pipeline)
 python src/asr/scripts/run_asr.py
 
-# simulation without the microphone array: plays wav files as a DSP stream, prints JSON
+# simulation without the microphone array: plays wav files as a DSP stream, prints JSON.
+# The DSP's own speech detector (src/dsp/source/vad.py) picks the speech chunks:
+# needs torch; its Silero model downloads once from GitHub.
 python src/asr/scripts/run_asr.py --wav data/asr/sample_01.wav
 
 # test ASR -> NLU without the DSP: a stand-in NLU prints what arrives,
