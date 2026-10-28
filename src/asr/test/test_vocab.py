@@ -12,8 +12,8 @@ sys.path.insert(0, str(SRC_DIR))  # src/ on sys.path, like the scripts
 from asr.normalize import normalize
 from asr.vocab import (
     COMMAND_VOCAB, INTENT_TERMS, SPOKEN_FORMS,
-    check_grammar_leakage, check_leakage, cluster_key, ends_with_delimiter, find_terms, term_counts,
-    vosk_grammar_phrases,
+    check_grammar_leakage, check_leakage, cluster_key, ends_with_delimiter, find_terms, heard_halt,
+    term_counts, vosk_grammar_phrases,
 )
 
 PROMPTS_DIR = SRC_DIR.parent / "data" / "asr" / "prompts"
@@ -81,6 +81,15 @@ class VocabularyTest(unittest.TestCase):
         self.assertFalse(ends_with_delimiter("go to slice one hundred and".split()))
         # Known: "Don't stop now" ends after "stop" - a false halt is the safe side.
         self.assertTrue(ends_with_delimiter("[unk] stop now".split()))
+
+    def test_halt_phrases(self):
+        for heard in ("halt", "[unk] halt robot", "emergency stop", "emergency stop emergency stop", "hard stop robot"):
+            with self.subTest(heard=heard):
+                self.assertTrue(heard_halt(heard.split()))
+        # "freeze": "next three slices" was heard as "next freeze" for a moment.
+        for heard in ("stop", "[unk] stop now", "emergency", "emergency clear", "back off", "next freeze", ""):
+            with self.subTest(heard=heard):
+                self.assertFalse(heard_halt(heard.split()))
 
     def test_context_words_are_not_terms(self):
         # In the grammar, but "The patient is stable" is not a command.

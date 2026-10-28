@@ -104,7 +104,8 @@ def simulate(stream: UtteranceStream, wav_paths: list[Path], push=None) -> None:
         has_speech = vad.is_speech_active(chunk)
         started = time.perf_counter()
         if has_speech:
-            finish(stream.feed(chunk, clock + i / TARGET_SR), started)
+            for result in stream.feed(chunk, clock + i / TARGET_SR):
+                finish(result, started)
         else:
             finish(stream.end_utterance(), started)  # the DSP stops sending: speech is over
     started = time.perf_counter()
@@ -147,7 +148,8 @@ def serve(stream: UtteranceStream, audio_addr: str, asr_addr: str, end_timeout_s
                 send(stream.end_utterance(), started)
             elif header.get("type") == "chunk" and len(parts) == 2:
                 chunk = np.frombuffer(parts[1], dtype=np.float32)
-                send(stream.feed(chunk, float(header["capture_time"])), started)
+                for result in stream.feed(chunk, float(header["capture_time"])):
+                    send(result, started)
                 last_chunk = time.monotonic()
             else:
                 logger.warning(f"Ignored message with header {header}")

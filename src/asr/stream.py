@@ -1,5 +1,6 @@
 """Streaming entry point: 0.5 s audio chunks from the DSP front end in, one
-ASR result (the JSON contract in src/asr/CLAUDE.md) per utterance out.
+ASR result (the JSON contract in src/asr/CLAUDE.md) per utterance out -
+plus an early copy for halt commands (below).
 
 The DSP front end only passes on chunks in which its voice activity
 detector heard speech, already beamformed and cleaned. So ASR does not run
@@ -20,11 +21,19 @@ be checked for the delimiter; its result equals transcribing the whole
 utterance in one go - exactly how it was benchmarked (docs/ASR_FINDINGS.md),
 so the measured accuracy holds.
 
+Emergency fast path: when the partial result first contains a halt command
+(vocab.HALT_PHRASES: "halt", "emergency stop", "hard stop"), an
+early copy is sent at once ("emergency_early": the words heard so far, no
+word times or confidence - partial results have none), and the utterance
+goes on and ends as usual. NLU gets the halt twice; halting twice is
+harmless, and cutting the utterance instead would send the rest ("robot"
+of "halt robot") as a command of its own.
+
 Usage:
     stream = UtteranceStream(CONFIGS[PRODUCTION_CONFIG]())
     for chunk, capture_time in dsp_chunks:
-        result = stream.feed(chunk, capture_time)
-        if result: send(result.to_json())
+        for result in stream.feed(chunk, capture_time):
+            send(result.to_json())
     result = stream.end_utterance()   # when the DSP reports end of speech
 """
 
@@ -36,7 +45,7 @@ import numpy as np
 
 from asr.audio import TARGET_SR
 from asr.schema import ASRResult, WordInfo
-from asr.vocab import ends_with_delimiter
+from asr.vocab import ends_with_delimiter, heard_halt
 
 if TYPE_CHECKING:  # only for the type hint; the tests pass a fake engine
     from asr.engines.vosk_engine import VoskEngine
@@ -65,31 +74,38 @@ class UtteranceStream:
         self._chunks: list[np.ndarray] = []
         self._start_time = 0.0      # capture time of the utterance's first chunk
         self._expected_next = 0.0   # capture time the next chunk should have
+        self._halt_sent = False     # early copy of a halt already sent for this utterance
 
     def has_audio(self) -> bool:
         return bool(self._chunks)
 
-    def feed(self, chunk: np.ndarray, capture_time: float) -> Optional[ASRResult]:
+    def feed(self, chunk: np.ndarray, capture_time: float) -> list[ASRResult]:
         """Add one speech chunk (capture_time = epoch seconds of its first
-        sample). Returns the finished previous utterance if this chunk
-        starts a new one, or the current one if it ended with a delimiter
-        or reached the maximum length; otherwise None."""
+        sample). Returns what to send now, in order - usually nothing: the
+        previous utterance if this chunk starts a new one (gap); then the
+        current one if it ended with a delimiter or reached the maximum
+        length, or else the early copy of a halt command first heard in it."""
         chunk = chunk_to_mono(chunk)
-        result = None
+        results: list[ASRResult] = []
         if self._chunks and capture_time - self._expected_next > self.gap_tolerance_s:
-            result = self.end_utterance("gap")
+            results.append(self.end_utterance("gap"))
         if not self._chunks:
             self._start_time = capture_time
+            self._halt_sent = False
         self._chunks.append(chunk)
         self._expected_next = capture_time + len(chunk) / TARGET_SR
         heard = self.engine.accept_chunk(chunk)
-        # Only one result can be returned: a delimiter in the very chunk
-        # after a gap is handled with the next chunk or at the end.
-        if result is None and ends_with_delimiter(heard):
-            return self.end_utterance("keyword")
-        if result is None and self._expected_next - self._start_time >= self.max_utterance_s:
-            result = self.end_utterance("max_length")
-        return result
+        if ends_with_delimiter(heard):
+            results.append(self.end_utterance("keyword"))
+        elif self._expected_next - self._start_time >= self.max_utterance_s:
+            results.append(self.end_utterance("max_length"))
+        elif not self._halt_sent and heard_halt(heard):
+            # The utterance goes on; its full result follows when it ends.
+            self._halt_sent = True
+            results.append(ASRResult(text=self.engine.heard_so_far(), confidence=None, language="en",
+                                     words=[], segment_start=round(self._start_time, 3),
+                                     end_reason="emergency_early"))
+        return results
 
     def end_utterance(self, reason: str = "dsp_end") -> Optional[ASRResult]:
         """Transcribe what was collected (None if nothing was). reason: see

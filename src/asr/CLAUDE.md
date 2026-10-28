@@ -100,8 +100,18 @@ errors in plain terms, and prefer simple, readable code over clever code.
      (3 of 99 clips); with it, chunked == one go on all clips. Smoke test:
      helps only when noise keeps the DSP detector on (sent 0.5 s after
      "now" instead of when the noise stops); in a quiet room ~0.5 s slower.
+  4. ✅ **Vosk only:** Whisper engine, prompts, correction list,
+     `engines/base.py` removed; `--wav` simulation uses the DSP's detector.
+  5. ✅ **Emergency halt fast path** (`vocab.HALT_PHRASES`: "halt",
+     "emergency stop", "hard stop"; `heard_halt`): first halt in the partial
+     result → `stream.feed` also returns an early copy (`end_reason`
+     "emergency_early", words empty, confidence null); the utterance goes
+     on. `feed()` now returns a list. Not "freeze" ("next three slices" was
+     read as "next freeze" for a moment), not "stop" alone. Never use
+     `SetPartialWords(True)`: it delayed the partial result by ~2 s.
   Check after each step: production config, `--runs 1`, existing clips only
-  (no new recordings).
+  (no new recordings). **The team-facing overview of the finished module is
+  `docs/ASR_GUIDE.md` – keep it up to date.**
 
 ## Setup (once per machine)
 ```powershell
@@ -183,7 +193,9 @@ One JSON object per detected utterance:
   chunk where speech starts + offset within that chunk.
 - `end_reason`: why the utterance ended – "keyword", "dsp_end", "gap",
   "timeout", "max_length"; null for a whole file. Telemetry, added
-  2026-10-28 (additive – NLU ignores it).
+  2026-10-28 (additive – NLU ignores it). "emergency_early" marks the early
+  copy of a halt (not an end; words empty, confidence null; the full
+  utterance follows).
 - **Proposal to discuss with Khanh (not implemented):** add `segment_end`
   (absolute end of speech). NLU's `latency_ms` is measured from audio capture,
   and end of speech is the reference for our latency target.
@@ -227,8 +239,8 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
    (since 2026-10-28). `normalize.words_to_digits` ("one hundred (and)
    twenty" → 120, "one point five" → 1.5) is only used for scoring.
 3. **Emergency commands are safety-critical:** recognise them when repeated,
-   in noise, and with the lowest latency. Idea: Vosk partial results can spot
-   "emergency stop" / "halt" / "freeze" before the end-of-utterance wait.
+   in noise, and with the lowest latency. Implemented: halts in Vosk's
+   partial result are sent as an early copy (Status, item 5).
 4. **Synonyms:** recognise every synonym in the guide; NLU maps them.
 5. **No correction list** (removed 2026-10-28): its 19 rules fixed
    Whisper's mishearings and changed nothing on Vosk output.
@@ -278,10 +290,9 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
   send "end" / a shorter last chunk as soon as speech stops.
 - The first "log event" of a session takes ~0.6 s extra (one-time setup in
   Vosk's free-speech model; warming up with silence/noise did not help).
-- Not done (ideas, only if needed): emergency fast path with Vosk partial
-  results (the per-chunk partial check for the delimiter makes this a small
-  step: send as soon as "emergency stop" / "halt" / "freeze" appears);
-  Vosk's own endpointing inside long speech runs.
+- Emergency halt fast path: done (2026-10-28, see Status, item 5).
+- Not done (idea, only if needed): Vosk's own endpointing inside long
+  speech runs.
 
 ## Module layout
 ```
@@ -377,10 +388,12 @@ F. **Pull request** to `main` once it runs on the Pi. (Held-out recordings
    by other speakers only if there is time – testing is closed otherwise.)
 
 ## Open questions for the team
-- **DSP (Minh, Quân):** please send chunks in the format of
-  `docs/ASR_GUIDE.md` (header with `capture_time` + float32 bytes) and an
-  `"end"` message when speech stops. Which beam if several speakers are
-  detected?
+- **DSP (Minh, Quân):** **send one chunk of pre-roll** – `run_dsp.py`'s
+  per-chunk gate drops the chunk where a word starts: 18 of 60 dev commands
+  lost their first word ("Freeze" → nothing; recall 0.884 vs 0.993 with
+  pre-roll, 2026-10-28, `docs/ASR_GUIDE.md` §7). `capture_time` is taken
+  at the chunk's end, not its first sample (~0.5 s late). Which beam if
+  several speakers are detected?
 - **NLU (Khanh):** `segment_end` proposal; NLU's normalizer must now handle
   number words itself (today "one hundred and twenty" -> "100 and 20", see
   `docs/ASR_GUIDE.md` §3); the new synonyms (Priority 1) must be added to

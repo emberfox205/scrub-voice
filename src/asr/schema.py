@@ -32,7 +32,9 @@ class ASRResult:
     segment_start: float
     # Why the utterance ended (set by asr.stream; null for a whole file):
     # "keyword" (spoken delimiter, vocab.DELIMITERS), "dsp_end", "gap",
-    # "timeout" or "max_length". Telemetry only.
+    # "timeout" or "max_length". "emergency_early" is not an end: an early
+    # copy of a halt command, sent while the utterance goes on (words empty,
+    # confidence null); the full utterance follows.
     end_reason: Optional[str] = None
 
     def to_json(self) -> str:

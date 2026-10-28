@@ -119,7 +119,10 @@ class _Recognizer:
             self._feed(data[:whole])
 
     def partial_words(self) -> list[str]:
-        """The words heard so far in this utterance (best guess, may change)."""
+        """The words heard so far in this utterance (best guess, may change).
+        Words only, no times: SetPartialWords(True) would add times, but
+        then "halt" showed up in the partial result 2 s late instead of
+        0.2 s after it was said (2026-10-28) - useless for a fast path."""
         return json.loads(self.kaldi.PartialResult()).get("partial", "").split()
 
     def finish(self) -> list[dict]:
@@ -225,6 +228,7 @@ class VoskEngine:
         self.model = _get_model()
         self.dropped_phrases: list[str] = []
         self.freeform: Optional[_Recognizer] = None
+        self._partial: list[str] = []  # words heard so far in the current utterance
         if grammar:
             phrases = []
             for phrase in grammar:
@@ -244,9 +248,16 @@ class VoskEngine:
     def accept_chunk(self, chunk: np.ndarray) -> list[str]:
         """Feed the next piece of the current utterance (16 kHz float32);
         returns the words heard so far, "[unk]" included - the stream looks
-        for a spoken delimiter in them."""
+        for a spoken delimiter or a halt command in them."""
         self.recognizer.accept(_to_pcm(chunk))
-        return self.recognizer.partial_words()
+        self._partial = self.recognizer.partial_words()
+        return self._partial
+
+    def heard_so_far(self) -> str:
+        """The words of the last accept_chunk as text, cleaned like the final
+        result (`clean_words`) - for the early copy of a halt command."""
+        words = [{"word": w, "start": 0.0, "end": 0.0, "conf": 0.0} for w in self._partial]
+        return " ".join(w["word"] for w in clean_words(words))
 
     def finish(self, audio: np.ndarray) -> ASRResult:
         """End the current utterance. `audio` = all of it (the chunks given

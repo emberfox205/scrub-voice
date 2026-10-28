@@ -107,6 +107,15 @@ GRAMMAR_CONTEXT_WORDS = ["patient", "active", "current", "immediately", "robotic
 # The stream checks Vosk's partial result after every chunk
 # (ends_with_delimiter); the engine removes the word from the output.
 DELIMITERS = ["execute", "over", "now"]
+# Halt commands are sent as soon as Vosk's partial result contains one of
+# these - an early copy, before the utterance ends; the full utterance
+# follows as usual (asr.stream, heard_halt; decision 2026-10-28). Only
+# halts: a false halt stops the robot, the safe side. "clear area" / "back
+# off" move the robot and wait for the end of the utterance. Not "stop"
+# alone ("don't stop now"), not "freeze": on the dev set the partial result
+# read "next three slices" as "next freeze" for a moment - a false halt on
+# a navigation command. "freeze" still works, at the end of the utterance.
+HALT_PHRASES = ["halt", "emergency stop", "hard stop"]
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _TERMS = sorted({tuple(normalize(t).split()) for t in COMMAND_VOCAB}, key=len, reverse=True)
@@ -181,6 +190,13 @@ def ends_with_delimiter(words: list[str]) -> bool:
         return False
     before = find_terms(normalize(" ".join(heard[:-1])))
     return any(not _NUMBER.fullmatch(term) for term in before)
+
+
+def heard_halt(words: list[str]) -> bool:
+    """True if a halt phrase (HALT_PHRASES) is among the words heard so far,
+    as whole words: "halt robot", "[unk] freeze" yes; "stop", "back off" no."""
+    heard = f" {' '.join(w for w in words if w != '[unk]')} "
+    return any(f" {phrase} " in heard for phrase in HALT_PHRASES)
 
 
 def term_counts(ref_normalized: str, hyp_normalized: str) -> tuple[int, int, int]:

@@ -1,7 +1,11 @@
 # ASR Module – Findings
 
-> **How to read this file:** start with the one-page overview right below.
-> Everything after it is the detailed log, newest first. All numbers are
+> **The finished module (what it does, what NLU and DSP have to do, how to
+> run it): `docs/ASR_GUIDE.md`.** This file is the log of how we got there.
+>
+> **How to read this file:** the one-page overview right below is from the
+> team meeting on 2026-10-17 (before the rework). Everything after it is
+> the detailed log, newest first. All numbers are
 > from recordings that were also used for tuning (one speaker), so they are
 > optimistic. Sections from before 2026-10-14 used the old image-viewer
 > commands (pan, window, axial, …) and a local project folder (owner:
@@ -227,6 +231,51 @@ Known limits: an end word inside `log_event` free text ("log event
 bleeding is over the margin") ends the note early; words right after the
 end word, in the same half-second, belong to the first command – leave a
 short pause.
+
+### 4. Emergency halt fast path (our addition) – done
+When Vosk's best guess so far first contains **"halt"**, **"emergency
+stop"** or **"hard stop"**, an early copy goes to NLU at once
+(`end_reason: "emergency_early"`, the words heard so far, no word times);
+the utterance goes on and its full message follows as usual. NLU gets the
+halt twice – harmless. Cutting the utterance at the halt instead would
+send the rest ("robot" of "halt robot") as a command of its own.
+
+Only halts: a false halt only stops the robot. "Clear area" and "back off"
+move the robot and wait for the end.
+
+| finding | what we did |
+|---|---|
+| Asking Vosk for word times in its running guess delays the guess: "halt" appeared after 2 s instead of 0.2 s | no word times in the early copy |
+| With "freeze" on the list, "next three slices" was read as "next **freeze**" for a moment – an early halt on a navigation command | "freeze" left out of the fast path (still a normal command) |
+| "stop" alone appears in everyday talk ("don't stop now") | left out |
+
+Results, gated like the real audio front end (its speech detector decides
+which pieces are sent and when "end" comes):
+
+| check | result |
+|---|---|
+| 94 recordings, quiet room | one early copy: "emergency stop, emergency stop" – 2.0 s sooner; **no false halts** |
+| short halts in a quiet room ("halt robot") | no gain: the front end's "end" came first |
+| noisy room (speech detector stays on) | "halt robot": early copy after 1.0 s; "emergency stop": after 2.0 s – instead of when the noise stops (6 s here, up to 15 s) |
+
+Like the end word, it pays off in noise and in long utterances, not for a
+short command in a quiet room.
+
+### 5. Found on the way: the audio front end cuts off first words
+With the simulation now using the front end's real speech detector, "Halt
+robot" arrived as `robot`. The detector decides per half-second piece; a
+piece in which a word only starts (0.1 s of "halt") counts as silence and
+is never sent. All 60 dev commands, gated exactly like `run_dsp.py`:
+
+| | command words found | right | commands that came out different |
+|---|---|---|---|
+| front end as today | 0.884 | 0.976 | 18 of 60 ("Freeze" → nothing, "Back off" → `off`, "Park arm" → `jog arm`) |
+| plus the piece before the speech starts | 0.993 | 1.000 | 0 of 60 |
+
+The fix belongs in the audio front end (keep the last silent piece and
+send it first when speech starts) – handed to Minh and Quân in
+`docs/ASR_GUIDE.md` §7. The old simulation hid the problem: its detector
+(the one that came with Whisper) kept every piece that touched speech.
 
 ## Decision: Vosk with the command grammar (2026-10-16)
 
