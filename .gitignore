@@ -42,3 +42,4 @@ Thumbs.db
 
 # Generated audio outputs
 data/dsp/output/
+models/
