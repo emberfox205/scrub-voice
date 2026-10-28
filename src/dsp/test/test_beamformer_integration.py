@@ -186,9 +186,19 @@ def run_live_pipeline():
 
                 # Route audio to speaker tracks based on their PHYSICAL ANGLE
                 for angle, stream in zip(target_angles_to_steer, enhanced_streams):
-                    if angle not in speaker_tracks:
-                        speaker_tracks[angle] = []
-                    speaker_tracks[angle].append(stream.copy())
+                    matched_track = None
+                    for track_angle in speaker_tracks.keys():
+                        diff = abs(angle - track_angle)
+                        circ_diff = min(diff, 360.0 - diff)
+                        if circ_diff <= 15.0: 
+                            matched_track = track_angle
+                            break
+
+                    if matched_track is None:
+                        matched_track = angle
+                        speaker_tracks[matched_track] = []
+
+                    speaker_tracks[matched_track].append(stream.copy())
 
 
     except KeyboardInterrupt:
