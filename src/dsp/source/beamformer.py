@@ -93,8 +93,11 @@ class DASBeamformer:
         # Broadcasted subtraction:
         p_interf = total_power - beam_power
 
+        # ADAPTIVE ALPHA
+        alpha_eff = alpha / max(1, num_targets - 1)
+
         # Soft Wiener Gain for all targets simultaneously
-        wiener_gain = beam_power / (beam_power + alpha * p_interf + eps)
+        wiener_gain = beam_power / (beam_power + alpha_eff * p_interf + eps)
         wiener_gain = np.clip(wiener_gain, floor, 1.0).astype(np.float32)
 
         Y_stft *= wiener_gain

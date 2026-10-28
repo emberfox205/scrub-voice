@@ -57,7 +57,7 @@ def stft_to_wav(enhanced_stft: Tensor, n_fft: int = 512, hop_length: int = 256, 
 # Configuration
 # ---------------------------------------------------------
 ONNX_MODEL_PATH = "src/dsp/denoise/onnx/duofilter.onnx"
-INPUT_WAV = "src/dsp/denoise/audio/noise_audio.wav"
+INPUT_WAV = "src/dsp/denoise/audio/live_beam_stream_148.0deg.wav"
 OUTPUT_WAV = "src/dsp/denoise/audio/clean_audio.wav"
 
 # DuoFilter Audio & STFT Parameters
