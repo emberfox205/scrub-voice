@@ -54,6 +54,24 @@ class VocabularyTest(unittest.TestCase):
         for needed_alone in ["back", "ten", "x", "zoom"]:
             self.assertIn(needed_alone, entries)
 
+    def test_synonyms_from_the_evaluation(self):
+        entries = vosk_grammar_phrases()
+        for needed in ["bring up", "pull up", "hard stop", "make it bigger", "go back",
+                       "advance", "enlarge", "evacuate", "patient", "safe height"]:
+            self.assertIn(needed, entries)
+        for phrase_only in ["pull", "make", "it", "hard", "surgical", "safe"]:
+            self.assertNotIn(phrase_only, entries)
+        # Left out after measuring (see INTENT_TERMS): "hold" turned "halt"
+        # into "hold", "to" turned "two" into "to", the short words caught
+        # everyday speech. "wait" sounds like "eight".
+        for left_out in ["hold", "on", "jump", "to", "load", "hide", "closer", "wait"]:
+            self.assertNotIn(left_out, entries)
+
+    def test_context_words_are_not_terms(self):
+        # In the grammar, but "The patient is stable" is not a command.
+        self.assertEqual(find_terms(normalize("The patient is stable")), [])
+        self.assertEqual(find_terms(normalize("Bring up the patient CT")), ["bring up", "ct"])
+
     def test_no_test_sentence_in_any_biasing_text(self):
         # Stricter than the benchmark (dev only): held-out and non-command too.
         check_all_biasing_leakage(ALL_TEST_PHRASES)

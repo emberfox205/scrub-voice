@@ -149,3 +149,10 @@ The grammar is built from the command words in `src/asr/vocab.py`
 recognized. Add it there (and run the unit tests). Words missing from the
 Vosk dictionary need a sound-alike spelling in `SPOKEN_FORMS` (example:
 "hemostat" → "hemo stat").
+
+Every new word has a price: everyday talk can be forced into it. Short
+single words are the risk ("load" caught "hello"; "hold on" turned "halt
+robot" into "hold robot"); two-word phrases ("bring up") are safer. After
+a change, re-run the benchmark on the non-command recordings
+(`docs/ASR_FINDINGS.md`, "Rework", step 2). A new word only helps if NLU
+knows it too.

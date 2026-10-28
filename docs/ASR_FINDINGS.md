@@ -29,7 +29,6 @@ speaking. When the speaker stops, the audio front end sends "end".
 ```json
 {
   "text": "zoom in two x",
-  "normalized": "zoom in 2 x",
   "confidence": 0.875,
   "language": "en",
   "words": [
@@ -44,8 +43,7 @@ speaking. When the speaker stops, the audio front end sends "end".
 
 | field | in plain words |
 |---|---|
-| `text` | exactly what the engine heard |
-| `normalized` | the same, tidied up for the computer: numbers as digits, no "please", known mishearings fixed. **This is the field to classify.** Empty = nothing usable was heard. |
+| `text` | the words the engine heard, not tidied up (numbers stay words). Empty = nothing usable was heard. Until 2026-10-28 there was also a tidied-up `normalized` field – now NLU does all tidying. |
 | `confidence` | how sure the engine is, 0 to 1 (empty if it understood nothing) |
 | `words` | every word with its timing and its own confidence |
 | `segment_start` | the clock time when the speech started |
@@ -95,7 +93,7 @@ model) got 54 of 60 right, writes everyday talk more faithfully, but is
 | who | what |
 |---|---|
 | **Audio front end (DSP)** | Send the half-second pieces as 32-bit float, mono, 16 kHz, with the clock time of their first sample, and send **"end"** when speech stops – otherwise every command arrives 0.9 s later. Send one beam only. Message format: `docs/ASR_GUIDE.md`. |
-| **Language understanding (NLU)** | Classify **`normalized`**, not `text` (the engine writes "c t", "m r i", "hemo stat" in `text`; `normalized` has "ct", "mri", "hemostat"). Empty `normalized` = nothing understood → unknown. Free text after "log event" is often wrong for medical words ("hepatic" → "have pet take") – store it as it is. |
+| **Language understanding (NLU)** | Classify `text` and turn number words into digits yourself ("one hundred and twenty" → 120). Empty `text` = nothing understood → unknown. Free text after "log event" is often wrong for medical words ("hepatic" → "have pet take") – store it as it is. |
 | **Everyone** | New command word? Add it to `src/asr/vocab.py`, otherwise speech recognition cannot hear it. |
 
 ### Honest limits
@@ -110,6 +108,78 @@ model) got 54 of 60 right, writes everyday talk more faithfully, but is
 - The very first "log event" after start-up takes about 0.6 s longer.
 
 How to connect and run it: **`docs/ASR_GUIDE.md`**.
+
+## Rework after the team evaluation (2026-10-28)
+
+The team evaluation (`evaluations/asr/README.md`) asked for three changes.
+After each one we re-ran the production setup once on the existing
+recordings (60 dev commands, 19 non-command sentences, 15 noise clips) –
+no new recordings.
+
+### 1. No tidying-up in speech recognition (evaluation "Priority 3") – done
+- The `normalized` field is gone. NLU already read `text`; now it is the
+  only stage that tidies text (number words → digits, "please", …).
+- `text` = the words as heard. The one fix left: words missing from the
+  Vosk dictionary are written as one word again ("hemo stat" → "hemostat",
+  "c t" → "ct", "x ray" → "x-ray"), and `[unk]` (speech outside the list)
+  is left out, so pure noise gives an empty `text`. Before, NLU got
+  "hemo stat" and "unk", which its tool and scan matching misses.
+- All scores unchanged; 24 of 94 texts changed, all only by this fix.
+- Found on the way: NLU's own tidying turns "one hundred and twenty" into
+  "100 and 20" – NLU has to handle that now (`docs/ASR_GUIDE.md` §3).
+- The correction list (19 known mishearings) is no longer applied to what
+  NLU gets. Its mistakes are Whisper's; with the Vosk grammar it changed
+  nothing (scores with and without it were equal).
+
+### 2. More words for the same commands (evaluation "Priority 1") – done
+Grammar: 115 → 157 entries (119 → 159 words). Added, from NLU's training
+phrases and the evaluation's examples:
+
+| command | new words |
+|---|---|
+| hand a tool | bring, need, pickup, artery forceps, tissue forceps, surgical scissors |
+| park / emergency | dock, evacuate, hard stop |
+| open scan | bring up, pull up |
+| zoom | enlarge, bigger, smaller, shrink, make it bigger / smaller, increase, decrease, reduce, wider |
+| slices | advance, rewind, scroll, go forward, go back |
+| camera | jog, wand, ahead, away, pitch, yaw, upward, downward |
+
+Words around commands ("patient", "active", "current", "immediately",
+"robotic", "position", "surgical field", "safe height") are in the list
+so they are written as said, but they do not count as command words.
+
+| | before | all proposed words | final list |
+|---|---|---|---|
+| command words found (dev) | 0.986 | 0.971 | **0.993** |
+| command words right (dev) | 0.986 | 1.000 | **1.000** |
+| word error rate (dev) | 0.092 | 0.107 | **0.087** |
+| command words in non-command talk, per sentence | 0.08 | 0.33 | **0.08** |
+| command words on noise | 0 | 0 | 0 |
+| "Halt robot" | right | "hold robot" | right |
+
+**Left out after measuring** (each removed alone, then together):
+
+| word | what it did |
+|---|---|
+| "hold on" | "halt robot" became "hold robot" – an emergency command lost |
+| "jump to" | "two" became "to" more often ("zoom in to x", "right to centimeters") |
+| "load", "hide", "closer" | everyday talk landed on them: "Hello" → "load", "waiting outside" → "hide", "closing" → "closer" |
+| "wait" (not tried) | sounds like "eight" |
+
+What we learned: the evaluation is right that more words do not make it
+slower (no change on the laptop). The real cost of a word is accuracy:
+every short single word is a place where everyday talk can land.
+Two-word phrases ("bring up", "pull up") are safer.
+
+Still to watch: "Where did I park my car" now comes out as "park make arm"
+(before: nothing) – NLU should not read that as "park arm".
+
+**NLU has to learn the new words too**, otherwise they do not help:
+pull up, scroll, go forward, go back, enlarge, bigger, smaller, shrink,
+make it bigger / smaller, need. "load", "jump", "hide", "closer" and
+"hold on" will never arrive from speech recognition.
+
+### 3. Spoken end word (evaluation "Priority 2") – next
 
 ## Decision: Vosk with the command grammar (2026-10-16)
 

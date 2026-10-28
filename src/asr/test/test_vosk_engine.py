@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # src/ on sys.path
 from asr.audio import load_audio
 from asr.engines.vosk_engine import (MODEL_NAME, MODELS_DIR, VoskEngine, _starts_log_event, clean_words,
                                      splice_log_event)
+from asr.vocab import vosk_grammar_phrases
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -92,6 +93,12 @@ class RealClipTest(unittest.TestCase):
         self.assertTrue(first.words)
         self.assertEqual(first.to_json(), second.to_json())
         self.assertLess(first.words[-1].end, 4.0 + 0.01)
+
+    def test_every_grammar_word_is_in_the_model_dictionary(self):
+        # The engine silently drops phrases with unknown words; a new
+        # synonym missing from the dictionary would never be recognized.
+        engine = VoskEngine(grammar=vosk_grammar_phrases())
+        self.assertEqual(engine.dropped_phrases, [])
 
 
 if __name__ == "__main__":

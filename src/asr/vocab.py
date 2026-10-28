@@ -22,29 +22,52 @@ from asr.normalize import NUMBER_WORDS, TENS, normalize
 # The words the ASR must get right, per intent (src/asr/CLAUDE.md "Commands
 # to recognise"). Synonyms are listed because the speaker may use them; the
 # language understanding stage maps them to the schema tokens.
+# The last line of an intent: synonyms added on 2026-10-28 after the team
+# evaluation (evaluations/asr/README.md, "Priority 1") - words from NLU's
+# training phrases and slot dictionaries, plus colloquial ones surgeons use
+# ("pull up", "make it bigger", "scroll") that NLU has to learn as well.
+# Left out on purpose: "wait" (sounds like "eight" - "move left eight
+# centimeters" could turn into a halt), and five that made the dev and
+# non-command sets worse when measured (2026-10-28): "hold on" ("halt
+# robot" became "hold robot"), "jump to" ("two" became "to" more often:
+# "zoom in to x"), "load", "hide", "closer" (everyday speech was forced into
+# them: "Hello" -> "load", "waiting outside" -> "hide", "closing" ->
+# "closer"). Short single words are the risk: any speech outside the
+# grammar can land on them; phrases ("bring up") are safer.
 INTENT_TERMS: dict[str, list[str]] = {
     "pick_tool": [
         "hand", "pass", "give me",
         "scalpel", "scissors", "hemostat", "forceps",
         "knife", "ten blade", "blade", "iris", "metz", "metzenbaum",
         "clamp", "snap", "tweezers", "pickups",
+        "bring", "need", "pickup", "artery forceps", "tissue forceps", "surgical scissors",
     ],
-    "park_arm": ["park", "standby", "retract", "arm", "robot"],
-    "clear_emergency": ["emergency", "clear", "area", "back off"],
-    "halt_emergency": ["emergency", "stop", "halt", "freeze", "robot"],
-    "open_scan": ["open", "show", "display", "scan", "CT", "MRI", "X-ray"],
+    "park_arm": ["park", "standby", "retract", "arm", "robot",
+                 "dock"],
+    "clear_emergency": ["emergency", "clear", "area", "back off",
+                        "evacuate"],
+    "halt_emergency": ["emergency", "stop", "halt", "freeze", "robot",
+                       "hard stop"],
+    "open_scan": ["open", "show", "display", "scan", "CT", "MRI", "X-ray",
+                  "bring up", "pull up"],
     "close_scan": ["close", "dismiss", "scan", "viewer", "CT", "MRI", "X-ray"],
     # "in"/"out" only count together with "zoom": alone they are everyday words.
-    "zoom_display": ["zoom", "zoom in", "zoom out", "magnify"],
-    "navigate_slice": ["next", "previous", "back", "go to", "slice", "slices"],
+    "zoom_display": ["zoom", "zoom in", "zoom out", "magnify",
+                     "enlarge", "bigger", "smaller", "shrink", "make it bigger", "make it smaller",
+                     "increase", "decrease", "reduce", "wider"],
+    "navigate_slice": ["next", "previous", "back", "go to", "slice", "slices",
+                       "advance", "rewind", "scroll", "go forward", "go back"],
     # Plus free text (event name, comment), which is not a term.
     "log_event": ["log", "record", "event", "milestone", "note", "comment"],
     "move_camera": [
         "camera", "move", "left", "right", "up", "down", "forward", "backward",
         "centimeter", "centimeters",
+        "jog", "wand", "ahead", "away",
     ],
-    "tilt_camera": ["tilt", "up", "down", "left", "right", "degree", "degrees"],
-    "reset_camera": ["reset", "center", "view", "home", "camera"],
+    "tilt_camera": ["tilt", "up", "down", "left", "right", "degree", "degrees",
+                    "pitch", "yaw", "upward", "downward"],
+    "reset_camera": ["reset", "center", "view", "home", "camera",
+                     "wand"],
 }
 
 COMMAND_VOCAB = sorted({term for terms in INTENT_TERMS.values() for term in terms})
@@ -69,6 +92,14 @@ GRAMMAR_NUMBER_WORDS = list(NUMBER_WORDS) + list(TENS) + ["hundred", "point"]
 # "tilt the camera up a little" into "... up eleven" - an invented angle
 # (dev set, Phase B).
 GRAMMAR_MODIFIER_WORDS = ["little", "bit", "okay", "could", "you"]
+# Words around the commands that carry no intent themselves ("bring up the
+# patient CT", "close the active scan", "hard stop robot immediately", "move arm to
+# park position", "evacuate surgical field", "move to safe height"; NLU's
+# training phrases). In the grammar so they are written as said instead of
+# being forced into command words, but not terms: "The patient is stable"
+# is not a command (non-command set).
+GRAMMAR_CONTEXT_WORDS = ["patient", "active", "current", "immediately", "robotic", "position",
+                         "surgical field", "safe height"]
 
 # One natural sentence with the key terms, for Whisper's initial_prompt (it
 # nudges spelling and word choice toward these terms). Written from the
@@ -107,7 +138,7 @@ def vosk_grammar_phrases() -> list[str]:
     next to "two", the grammar heard "go two slice 45" (dev set, Phase B)."""
     phrases: set[str] = set()
     single: set[str] = set(GRAMMAR_FUNCTION_WORDS + GRAMMAR_NUMBER_WORDS + GRAMMAR_MODIFIER_WORDS)
-    for term in COMMAND_VOCAB:
+    for term in COMMAND_VOCAB + GRAMMAR_CONTEXT_WORDS:
         spoken = SPOKEN_FORMS.get(term, term.lower())
         if " " in spoken:
             phrases.add(spoken)

@@ -73,13 +73,20 @@ errors in plain terms, and prefer simple, readable code over clever code.
   outputs, retired Moonshine code) stays in Josias's local folder
   `Desktop\projects\asr-module`; it is not needed for further work.
 - **Rework from the team evaluation (2026-10-28,
-  `evaluations/asr/README.md` on main):** in this order, one commit each –
+  `evaluations/asr/README.md` on main):** in this order, one commit each
+  (Josias commits; details and numbers: `docs/ASR_FINDINGS.md`, "Rework") –
   1. ✅ **Priority 3 – no normalization in ASR:** the `normalized` field is
      gone; `text` = the words as heard (`clean_words`: sound-alike spellings
      joined, `[unk]` dropped). `normalize.py` is for scoring only. Benchmark
      unchanged (recall 0.986 / precision 0.986).
-  2. **Priority 1 – synonyms** in `vocab.py` `INTENT_TERMS` (table agreed
-     with Josias; not "wait" – sounds like "eight").
+  2. ✅ **Priority 1 – synonyms** in `vocab.py` `INTENT_TERMS` (+ context
+     words in `GRAMMAR_CONTEXT_WORDS`, not terms): grammar 115 → 157
+     entries. Dev recall 0.993 / precision 1.000, non-command false
+     commands unchanged (0.08). Left out after measuring: "hold on" ("halt"
+     → "hold"), "jump to" ("two" → "to"), "load" / "hide" / "closer"
+     (everyday talk landed on them); "wait" (sounds like "eight"). Rule:
+     short single words catch everyday speech – prefer phrases, and re-run
+     the non-command set after every vocabulary change.
   3. **Priority 2 – spoken delimiter** "execute" / "over" / "now" (only
      after a command word; not "end" – sounds like "and"): Vosk partial
      results per chunk, ASR removes the word and sends at once.
@@ -183,6 +190,10 @@ Benchmark-only data (config name, processing time, RTF, RAM) goes to
 | `tilt_camera` | "Tilt down 15 degrees", "Tilt right", "Tilt up" | tilt; up, down, left, right; 1–45 degrees |
 | `reset_camera` | "Reset camera", "Center view", "Camera home" | reset, center, view, home |
 | `unknown` | "It is raining outside", "Pass that thing", "Hello" | anything – transcribe faithfully |
+
+Since 2026-10-28 each intent also has synonyms from the team evaluation
+("bring up", "pull up", "hard stop", "enlarge", "scroll", "go back", "jog",
+"pitch", …): the full list is `vocab.py` `INTENT_TERMS`.
 
 What this means for the ASR design (decided in Phase A, measure in Phase B):
 1. **`log_event` contains free text**, which a restricted Vosk grammar cannot
