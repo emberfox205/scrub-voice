@@ -102,7 +102,8 @@ class DuoFilterDenoiser:
         n_fft: int = 512,
         hop_length: int = 256,
         win_length: int = 512,
-        threads: int = 1,
+        threads: int = 2,
+        lookback_samples: int = 2048,
     ):
         if model_path is None:
             model_path = self.DEFAULT_ONNX_PATH
@@ -111,6 +112,7 @@ class DuoFilterDenoiser:
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
+        self.lookback_samples = lookback_samples
 
         if not self.model_path.exists():
             raise FileNotFoundError(f"DuoFilter ONNX model not found at {self.model_path}")
@@ -137,6 +139,7 @@ class DuoFilterDenoiser:
         """Reset internal streaming OLA buffers."""
         self._stream_in_buffer = torch.zeros(0, dtype=torch.float32)
         self._stream_ola_buffer = torch.zeros(self.win_length, dtype=torch.float32)
+        self._stream_lookback_buffer = np.zeros(self.lookback_samples, dtype=np.float32)
 
     def _downmix(self, audio: np.ndarray, channel_idx: int = 0) -> np.ndarray:
         """
@@ -261,69 +264,32 @@ class DuoFilterDenoiser:
         phase_preservation: bool = False,
     ) -> np.ndarray:
         """
-        Stateful streaming enhancement with Overlap-Add (OLA).
-        Processes real-time audio blocks (e.g. 0.5s or 250ms chunks) without
-        boundary amplitude drops or phase discontinuities.
+        Streaming enhancement with Lookback Warm-up Buffer.
+        Prepend past audio history to warm up recurrent states and prevent speech swallowing.
         """
-        chunk_t = torch.from_numpy(chunk.astype(np.float32)).view(-1)
-        self._stream_in_buffer = torch.cat([self._stream_in_buffer, chunk_t])
-
-        if self._stream_in_buffer.shape[0] < self.win_length:
+        actual_len = len(chunk)
+        if actual_len == 0:
             return np.zeros(0, dtype=np.float32)
 
-        num_frames = (self._stream_in_buffer.shape[0] - self.win_length) // self.hop_length + 1
-        if num_frames <= 0:
-            return np.zeros(0, dtype=np.float32)
+        extended_chunk = np.concatenate([self._stream_lookback_buffer, chunk.astype(np.float32)])
 
-        total_consumed = (num_frames - 1) * self.hop_length + self.win_length
-        stream_segment = self._stream_in_buffer[:total_consumed]
-        self._stream_in_buffer = self._stream_in_buffer[num_frames * self.hop_length:]
-
-        frames = stream_segment.unfold(dimension=0, size=self.win_length, step=self.hop_length)
-        windowed_frames = frames * self.window
-
-        spec = torch.fft.rfft(windowed_frames, n=self.n_fft)
-        stft_input = torch.stack([spec.real, spec.imag], dim=0).unsqueeze(0).permute(0, 1, 2, 3)
-
-        T = stft_input.shape[2]
-        TARGET_FRAMES = 32
-        if T < TARGET_FRAMES:
-            pad_T = TARGET_FRAMES - T
-            stft_in_padded = torch.nn.functional.pad(stft_input, (0, 0, 0, pad_T), mode="constant", value=0.0)
+        if actual_len >= self.lookback_samples:
+            self._stream_lookback_buffer = chunk[-self.lookback_samples:].astype(np.float32).copy()
         else:
-            stft_in_padded = stft_input
-
-        ort_inputs = {self.input_name: stft_in_padded.numpy().astype(np.float32)}
-        ort_outputs = self.session.run([self.output_name], ort_inputs)
-        enhanced_stft = torch.from_numpy(ort_outputs[0])
-
-        if T < TARGET_FRAMES:
-            enhanced_stft = enhanced_stft[:, :, :T, :]
-
-        if phase_preservation:
-            spec_noisy = torch.complex(stft_input[:, 0].float(), stft_input[:, 1].float())
-            spec_enh = torch.complex(enhanced_stft[:, 0].float(), enhanced_stft[:, 1].float())
-            noisy_phase = torch.angle(spec_noisy)
-            enh_mag = torch.clamp(spec_enh.abs(), min=1e-8)
-            mag_only_complex = enh_mag * torch.exp(1j * noisy_phase)
-            enhanced_stft = torch.stack([mag_only_complex.real, mag_only_complex.imag], dim=1)
-
-        enh_complex = torch.complex(enhanced_stft[0, 0].float(), enhanced_stft[0, 1].float())
-        synth_frames = torch.fft.irfft(enh_complex, n=self.n_fft) * self.window
-
-        out_samples = []
-        for t in range(T):
-            frame_time = synth_frames[t]
-            self._stream_ola_buffer += frame_time
-            out_samples.append(self._stream_ola_buffer[:self.hop_length].clone())
-            self._stream_ola_buffer = torch.cat([
-                self._stream_ola_buffer[self.hop_length:],
-                torch.zeros(self.hop_length, dtype=torch.float32)
+            self._stream_lookback_buffer = np.concatenate([
+                self._stream_lookback_buffer[actual_len:], 
+                chunk.astype(np.float32)
             ])
 
-        if len(out_samples) == 0:
-            return np.zeros(0, dtype=np.float32)
-        return torch.cat(out_samples).cpu().numpy().astype(np.float32)
+        enhanced_extended = self.enhance(
+            extended_chunk,
+            phase_preservation=phase_preservation,
+            streaming=False, 
+        )
+
+        clean_chunk = enhanced_extended[self.lookback_samples : self.lookback_samples + actual_len]
+        
+        return clean_chunk.astype(np.float32)
 
     def enhance_file(
         self,
@@ -411,8 +377,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--threads",
         type=int,
-        default=1,
-        help="Number of CPU threads for inference",
+        default=2,
+        help="Number of CPU threads for inference (default: 2 for RTF ~0.03)",
+    )
+    parser.add_argument(
+        "--lookback",
+        type=int,
+        default=2048,
+        help="Lookback context buffer size in samples (default: 2048 = 128ms)",
     )
     parser.add_argument(
         "--phase-preservation",
@@ -443,7 +415,7 @@ if __name__ == "__main__":
         input_p = REPO_ROOT / "data" / "asr" / "sample_01.wav"
 
     print(f"Running DuoFilterDenoiser on {input_p}...")
-    denoiser = DuoFilterDenoiser(threads=args.threads)
+    denoiser = DuoFilterDenoiser(threads=args.threads, lookback_samples=args.lookback)
     out_file, rtf = denoiser.enhance_file(
         input_p,
         args.output,

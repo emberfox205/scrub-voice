@@ -10,7 +10,7 @@ if str(project_root) not in sys.path:
 from src.dsp.denoise.model.DuoFilter.DuoFilter import DuoFilter
 
 # 1. Instantiate and load checkpoint
-model = DuoFilter(use_ema_norm=True).eval()
+model = DuoFilter(use_ema_norm=False).eval()
 checkpoint_path = project_root / "src" / "dsp" / "denoise" / "checkpoint" / "duofilter_best_model.ckpt"
 checkpoint = torch.load(checkpoint_path, map_location="cpu")
 state_dict = checkpoint.get("model_state_dict", checkpoint)
