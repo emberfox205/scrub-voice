@@ -12,7 +12,7 @@ sys.path.insert(0, str(SRC_DIR))  # src/ on sys.path, like the scripts
 from asr.normalize import normalize
 from asr.vocab import (
     COMMAND_VOCAB, INTENT_TERMS, SPOKEN_FORMS, WHISPER_PROMPT, WHISPER_PROMPT_SHORT,
-    check_all_biasing_leakage, check_leakage, cluster_key, find_terms, term_counts,
+    check_all_biasing_leakage, check_leakage, cluster_key, ends_with_delimiter, find_terms, term_counts,
     vosk_grammar_phrases,
 )
 
@@ -66,6 +66,21 @@ class VocabularyTest(unittest.TestCase):
         # everyday speech. "wait" sounds like "eight".
         for left_out in ["hold", "on", "jump", "to", "load", "hide", "closer", "wait"]:
             self.assertNotIn(left_out, entries)
+
+    def test_delimiters(self):
+        entries = vosk_grammar_phrases()
+        for delimiter in ["execute", "over", "now"]:
+            self.assertIn(delimiter, entries)
+        self.assertNotIn("end", entries)  # sounds like "and"
+        self.assertTrue(ends_with_delimiter("next slice now".split()))
+        self.assertTrue(ends_with_delimiter("zoom in two x execute".split()))
+        self.assertTrue(ends_with_delimiter("[unk] open c t scan [unk] over".split()))
+        self.assertFalse(ends_with_delimiter(["now"]))                       # no command before it
+        self.assertFalse(ends_with_delimiter("now zoom in".split()))         # not the last word
+        self.assertFalse(ends_with_delimiter("[unk] five now".split()))      # a number alone is no command
+        self.assertFalse(ends_with_delimiter("go to slice one hundred and".split()))
+        # Known: "Don't stop now" ends after "stop" - a false halt is the safe side.
+        self.assertTrue(ends_with_delimiter("[unk] stop now".split()))
 
     def test_context_words_are_not_terms(self):
         # In the grammar, but "The patient is stable" is not a command.

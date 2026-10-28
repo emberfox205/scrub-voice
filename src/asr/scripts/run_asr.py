@@ -54,7 +54,7 @@ DEBUG_LOG_FILE = DEBUG_LOG_DIR / "asr_transcripts.jsonl"
 def log_result(result, seconds: float) -> None:
     words_detail = ", ".join(f"{w.word}:{w.confidence:.2f}" for w in result.words) if result.words else "none"
     logger.info(
-        f"{result.text!r} (conf: {result.confidence}, {seconds:.2f}s) | Tokens: [{words_detail}]"
+        f"{result.text!r} (conf: {result.confidence}, {seconds:.2f}s, end: {result.end_reason}) | Tokens: [{words_detail}]"
     )
     try:
         with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
@@ -136,7 +136,7 @@ def serve(stream: UtteranceStream, audio_addr: str, asr_addr: str, end_timeout_s
             if not pull.poll(timeout=100):
                 if stream.has_audio() and time.monotonic() - last_chunk > end_timeout_s:
                     started = time.perf_counter()
-                    send(stream.end_utterance(), started)
+                    send(stream.end_utterance("timeout"), started)
                 continue
             parts = pull.recv_multipart()
             header = orjson.loads(parts[0])

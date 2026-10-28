@@ -30,6 +30,10 @@ class ASRResult:
     language: str
     words: list[WordInfo]
     segment_start: float
+    # Why the utterance ended (set by asr.stream; null for a whole file):
+    # "keyword" (spoken delimiter, vocab.DELIMITERS), "dsp_end", "gap",
+    # "timeout" or "max_length". Telemetry only.
+    end_reason: Optional[str] = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -42,5 +46,6 @@ class ASRResult:
                     for w in self.words
                 ],
                 "segment_start": self.segment_start,
+                "end_reason": self.end_reason,
             }
         )

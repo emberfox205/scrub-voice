@@ -87,9 +87,15 @@ errors in plain terms, and prefer simple, readable code over clever code.
      (everyday talk landed on them); "wait" (sounds like "eight"). Rule:
      short single words catch everyday speech – prefer phrases, and re-run
      the non-command set after every vocabulary change.
-  3. **Priority 2 – spoken delimiter** "execute" / "over" / "now" (only
-     after a command word; not "end" – sounds like "and"): Vosk partial
-     results per chunk, ASR removes the word and sends at once.
+  3. ✅ **Priority 2 – spoken delimiter** "execute" / "over" / "now"
+     (`vocab.DELIMITERS`, only after a command word; not "end" – sounds like
+     "and"): `stream.py` feeds Vosk chunk by chunk (`accept_chunk`), checks
+     the partial result after each chunk (`ends_with_delimiter`), sends at
+     once; `finish()` drops the word. New output field `end_reason`. Vosk
+     gets only whole 0.2 s steps – otherwise 0.5 s chunks changed words
+     (3 of 99 clips); with it, chunked == one go on all clips. Smoke test:
+     helps only when noise keeps the DSP detector on (sent 0.5 s after
+     "now" instead of when the noise stops); in a quiet room ~0.5 s slower.
   Check after each step: production config, `--runs 1`, existing clips only
   (no new recordings).
 
@@ -121,8 +127,9 @@ Pi 4.
   numbers are only for comparing setups.
 - **Input:** 0.5 s speech chunks, float32 mono 16 kHz, with the capture
   time of the first sample; message format in `docs/ASR_GUIDE.md`.
-- **End of utterance:** DSP "end" message (preferred), a gap in capture
-  times, or 0.8 s without chunks (timeout); 15 s maximum.
+- **End of utterance:** a spoken delimiter after a command ("next slice
+  now"), DSP "end" message (preferred), a gap in capture times, or 0.8 s
+  without chunks (timeout); 15 s maximum.
 - **Latency target (tentative):** under 1 s from end of speech to JSON for a
   ~2 s command, on the Pi. The budget includes waiting for the chunk that
   contains the end of speech (up to 0.5 s), the silence needed to decide the
@@ -167,6 +174,9 @@ One JSON object per detected utterance:
   `segment_start` and per-word confidence.
 - `segment_start`: absolute start time of the utterance = capture time of the
   chunk where speech starts + offset within that chunk.
+- `end_reason`: why the utterance ended – "keyword", "dsp_end", "gap",
+  "timeout", "max_length"; null for a whole file. Telemetry, added
+  2026-10-28 (additive – NLU ignores it).
 - **Proposal to discuss with Khanh (not implemented):** add `segment_end`
   (absolute end of speech). NLU's `latency_ms` is measured from audio capture,
   and end of speech is the reference for our latency target.
@@ -260,10 +270,13 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
 
 ## Utterances from the DSP stream (implemented, `stream.py`)
 - `UtteranceStream(engine)`: `feed(chunk, capture_time)` collects speech
-  chunks; the utterance is transcribed in one go when it ends (DSP "end",
-  capture-time gap > 0.25 s, or 15 s). Same as the benchmark → measured
-  accuracy holds. `segment_start` = first chunk's capture time + first
-  word's start; word times relative to it.
+  chunks; the utterance ends with a spoken delimiter after a command
+  ("keyword"), DSP "end", a capture-time gap > 0.25 s, the service's
+  timeout, or 15 s (`end_reason`). Vosk gets each chunk as it arrives
+  (whole 0.2 s steps) and its result equals transcribing in one go, so the
+  benchmark → measured accuracy holds. Whisper still gets the whole
+  utterance. `segment_start` = first chunk's capture time + first word's
+  start; word times relative to it.
 - `scripts/run_asr.py`: ZeroMQ service (binds PULL `SCRUB_AUDIO_ADDR`,
   connects PUSH `SCRUB_ASR_ADDR`, `ipc:///tmp/...` defaults like
   `src/orchestrator/`) or `--wav` simulation (Silero from faster-whisper
@@ -276,7 +289,9 @@ What this means for the ASR design (decided in Phase A, measure in Phase B):
 - The first "log event" of a session takes ~0.6 s extra (one-time setup in
   Vosk's free-speech model; warming up with silence/noise did not help).
 - Not done (ideas, only if needed): emergency fast path with Vosk partial
-  results; Vosk's own endpointing inside long speech runs.
+  results (the per-chunk partial check for the delimiter makes this a small
+  step: send as soon as "emergency stop" / "halt" / "freeze" appears);
+  Vosk's own endpointing inside long speech runs.
 
 ## Module layout
 ```

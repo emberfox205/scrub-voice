@@ -36,7 +36,7 @@ def main() -> None:
             received = time.time()
             # End of speech = start of speech + end of the last word.
             speech_end = msg["segment_start"] + (msg["words"][-1]["end"] if msg["words"] else 0.0)
-            print(f"text={msg['text']!r}  confidence={msg['confidence']}  "
+            print(f"text={msg['text']!r}  confidence={msg['confidence']}  end={msg.get('end_reason')}  "
                   f"end of speech -> here: {received - speech_end:.2f} s", flush=True)
     except KeyboardInterrupt:
         pass

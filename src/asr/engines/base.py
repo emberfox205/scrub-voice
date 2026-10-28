@@ -19,3 +19,13 @@ class ASREngine(Protocol):
     name: str
 
     def transcribe(self, audio: np.ndarray, sr: int = 16000) -> ASRResult: ...
+
+
+class StreamingASREngine(ASREngine, Protocol):
+    """An engine that can also take an utterance chunk by chunk and say
+    what it has heard so far (Vosk). asr.stream uses this to react to a
+    spoken delimiter; other engines (Whisper) get the whole utterance."""
+
+    def accept_chunk(self, chunk: np.ndarray) -> list[str]: ...
+
+    def finish(self, audio: np.ndarray) -> ASRResult: ...

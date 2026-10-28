@@ -76,6 +76,66 @@ class UtteranceStreamTest(unittest.TestCase):
         self.assertIsNone(self.stream.end_utterance())
         self.assertEqual(self.engine.calls, [])
 
+    def test_end_reasons(self):
+        self.stream.feed(chunk(), 100.0)
+        self.assertEqual(self.stream.end_utterance().end_reason, "dsp_end")
+        self.stream.feed(chunk(), 101.0)
+        self.assertEqual(self.stream.feed(chunk(), 103.0).end_reason, "gap")
+        self.assertEqual(self.stream.end_utterance("timeout").end_reason, "timeout")
+        stream = UtteranceStream(self.engine, max_utterance_s=1.0)
+        stream.feed(chunk(), 100.0)
+        self.assertEqual(stream.feed(chunk(), 100.5).end_reason, "max_length")
+
+    def test_non_streaming_engine_ignores_delimiters(self):
+        # The fake engine has no accept_chunk (like Whisper): only the end counts.
+        self.assertIsNone(self.stream.feed(chunk(), 100.0))
+        self.assertEqual(self.engine.calls, [])
+
+
+class FakeStreamingEngine:
+    """Like Vosk: takes chunks one by one; "hears" the scripted partial
+    results, one per chunk."""
+    name = "fake-streaming"
+
+    def __init__(self, partials: list[str]):
+        self.partials = [p.split() for p in partials]
+        self.fed = 0
+        self.finished: list[int] = []  # number of samples per finished utterance
+
+    def accept_chunk(self, chunk):
+        heard = self.partials[min(self.fed, len(self.partials) - 1)]
+        self.fed += 1
+        return heard
+
+    def finish(self, audio):
+        self.finished.append(len(audio))
+        return ASRResult("next slice", 0.9, "en", [WordInfo("next", 0.1, 0.4, 0.9)], segment_start=0.0)
+
+    def transcribe(self, audio, sr=16000):
+        raise AssertionError("a streaming engine is fed chunk by chunk")
+
+
+class DelimiterTest(unittest.TestCase):
+    def test_delimiter_after_a_command_sends_at_once(self):
+        engine = FakeStreamingEngine(["next", "next slice now", "zoom"])
+        stream = UtteranceStream(engine)
+        self.assertIsNone(stream.feed(chunk(), 100.0))
+        result = stream.feed(chunk(), 100.5)  # no DSP "end" needed
+        self.assertEqual(result.end_reason, "keyword")
+        self.assertEqual(engine.finished, [2 * CHUNK])
+        # The next chunk starts a new utterance; the DSP "end" for the old one finds nothing.
+        self.assertFalse(stream.has_audio())
+        self.assertIsNone(stream.feed(chunk(), 101.0))
+        self.assertEqual(stream.end_utterance().end_reason, "dsp_end")
+        self.assertEqual(engine.finished, [2 * CHUNK, CHUNK])
+
+    def test_delimiter_without_command_does_not_end(self):
+        for partials in (["now"], ["[unk] over"], ["now zoom"], ["[unk] five now"]):
+            with self.subTest(partials=partials):
+                stream = UtteranceStream(FakeStreamingEngine(partials))
+                self.assertIsNone(stream.feed(chunk(), 100.0))
+                self.assertTrue(stream.has_audio())
+
 
 class ChunkToMonoTest(unittest.TestCase):
     def test_dsp_layout_and_int16(self):

@@ -4,13 +4,22 @@ ASR result (the JSON contract in src/asr/CLAUDE.md) per utterance out.
 The DSP front end only passes on chunks in which its voice activity
 detector heard speech, already beamformed and cleaned. So ASR does not run
 its own speech detection: a run of speech chunks is one utterance. The
-utterance ends when
-- the DSP says speech has stopped (`end_utterance()`),
-- the next chunk does not follow on directly in time (a gap: chunks without
-  speech in between were not sent), or
-- it gets longer than `max_utterance_s` (safety net for a stuck detector).
-Then the whole utterance is transcribed in one go - exactly how the engines
-were benchmarked (docs/ASR_FINDINGS.md), so the measured accuracy holds.
+utterance ends when (`end_reason` in the result)
+- the speaker says a delimiter after a command, "next slice now"
+  ("keyword"; vocab.DELIMITERS) - sent at once, without waiting for the
+  DSP to notice the silence; the next chunk starts a new utterance,
+- the DSP says speech has stopped (`end_utterance()`, "dsp_end"),
+- the next chunk does not follow on directly in time ("gap": chunks without
+  speech in between were not sent),
+- the service waited too long for the next chunk (run_asr.py, "timeout"), or
+- it gets longer than `max_utterance_s` ("max_length", safety net for a
+  stuck detector - also where the delimiter helps: noise can keep the
+  detector on).
+A streaming engine (Vosk) gets every chunk as it arrives, so its partial
+result can be checked for the delimiter; its result equals transcribing the
+whole utterance in one go - exactly how the engines were benchmarked
+(docs/ASR_FINDINGS.md), so the measured accuracy holds. Other engines
+(Whisper) get the whole utterance at the end and ignore delimiters.
 
 Usage:
     stream = UtteranceStream(CONFIGS[PRODUCTION_CONFIG]())
@@ -29,6 +38,7 @@ import numpy as np
 from asr.audio import TARGET_SR
 from asr.engines.base import ASREngine
 from asr.schema import ASRResult, WordInfo
+from asr.vocab import ends_with_delimiter
 
 
 def chunk_to_mono(chunk: np.ndarray) -> np.ndarray:
@@ -51,6 +61,7 @@ class UtteranceStream:
         self.engine = engine
         self.max_utterance_s = max_utterance_s
         self.gap_tolerance_s = gap_tolerance_s
+        self._streaming = hasattr(engine, "accept_chunk")  # engines/base.py StreamingASREngine
         self._chunks: list[np.ndarray] = []
         self._start_time = 0.0      # capture time of the utterance's first chunk
         self._expected_next = 0.0   # capture time the next chunk should have
@@ -61,29 +72,40 @@ class UtteranceStream:
     def feed(self, chunk: np.ndarray, capture_time: float) -> Optional[ASRResult]:
         """Add one speech chunk (capture_time = epoch seconds of its first
         sample). Returns the finished previous utterance if this chunk
-        starts a new one, or the current one if it reached the maximum
-        length; otherwise None."""
+        starts a new one, or the current one if it ended with a delimiter
+        or reached the maximum length; otherwise None."""
         chunk = chunk_to_mono(chunk)
         result = None
         if self._chunks and capture_time - self._expected_next > self.gap_tolerance_s:
-            result = self.end_utterance()
+            result = self.end_utterance("gap")
         if not self._chunks:
             self._start_time = capture_time
         self._chunks.append(chunk)
         self._expected_next = capture_time + len(chunk) / TARGET_SR
+        if self._streaming:
+            heard = self.engine.accept_chunk(chunk)
+            # Only one result can be returned: a delimiter in the very chunk
+            # after a gap is handled with the next chunk or at the end.
+            if result is None and ends_with_delimiter(heard):
+                return self.end_utterance("keyword")
         if result is None and self._expected_next - self._start_time >= self.max_utterance_s:
-            result = self.end_utterance()
+            result = self.end_utterance("max_length")
         return result
 
-    def end_utterance(self) -> Optional[ASRResult]:
-        """Transcribe what was collected (None if nothing was)."""
+    def end_utterance(self, reason: str = "dsp_end") -> Optional[ASRResult]:
+        """Transcribe what was collected (None if nothing was). reason: see
+        the module notes ("dsp_end" when the DSP reports end of speech)."""
         if not self._chunks:
             return None
         audio = np.concatenate(self._chunks)
         start_time = self._start_time
         self._chunks = []
 
-        result = self.engine.transcribe(audio, TARGET_SR)
+        if self._streaming:
+            result = self.engine.finish(audio)
+        else:
+            result = self.engine.transcribe(audio, TARGET_SR)
+        result.end_reason = reason
         # The engine's word times count from the first chunk's start. The
         # contract wants segment_start = where the speech starts, and word
         # times relative to it.

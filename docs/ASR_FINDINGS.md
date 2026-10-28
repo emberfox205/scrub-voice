@@ -179,7 +179,48 @@ pull up, scroll, go forward, go back, enlarge, bigger, smaller, shrink,
 make it bigger / smaller, need. "load", "jump", "hide", "closer" and
 "hold on" will never arrive from speech recognition.
 
-### 3. Spoken end word (evaluation "Priority 2") – next
+### 3. Spoken end word (evaluation "Priority 2") – done
+A command can end with **"execute"**, **"over"** or **"now"** ("next slice
+now"). Speech recognition then sends it at once and leaves the word out of
+`text`. The word only counts after a command word ("now" alone or "now zoom
+in" does nothing). Not **"end"**: it sounds like "and", so "slice one
+hundred and twenty" could be cut off at "one hundred".
+
+How: Vosk now gets every half-second piece as it arrives, and after each
+piece we look at its best guess so far. A new field `end_reason` says why
+an utterance ended (`keyword`, `dsp_end`, `gap`, `timeout`, `max_length`).
+
+**Found on the way – feeding Vosk piece by piece can change words.** Vosk
+works in 0.2 s steps and adapts to the speaker after each step. Half-second
+pieces move those steps: 31 of 99 clips got slightly different timings,
+3 different words ("scalpel" → "scan home"). Fix: Vosk is only given whole
+0.2 s steps, the rest waits for the next piece. Then the result is exactly
+the same as decoding the clip in one go – on all 99 clips. So the
+benchmark still measures what the pipeline does.
+
+| check | result |
+|---|---|
+| benchmark (end words added to the grammar) | unchanged: found 0.993, right 1.000, non-command 0.08, noise 0 |
+| all 94 clips piece by piece vs in one go | identical on 93; the other is the expected case below |
+| "Don't stop now, we are almost done" | "now" after "stop" ends it: `down stop` is sent at once, the rest is empty. NLU got "stop" before too; a false halt is the safe side |
+
+**When does it help?** Smoke test on real voice: the "now" from that
+recording appended to "Next slice":
+
+| | without "now" | with "now" |
+|---|---|---|
+| quiet room (audio front end sends "end") | sent 0.5 s after the command | sent 0.5 s after "now" – about 0.5 s **later**, saying "now" takes time |
+| noisy room (noise keeps the speech detector on) | sent only when the noise stopped (4 s here, up to 15 s) | **sent 0.5 s after "now"** |
+
+So the end word is a fix for noisy rooms, not a speed-up: it cannot be
+faster than the half-second pieces (Vosk recognized "now" one piece after
+it was said). Not tested with real commands that end in an end word – no
+such recordings yet.
+
+Known limits: an end word inside `log_event` free text ("log event
+bleeding is over the margin") ends the note early; words right after the
+end word, in the same half-second, belong to the first command – leave a
+short pause.
 
 ## Decision: Vosk with the command grammar (2026-10-16)
 

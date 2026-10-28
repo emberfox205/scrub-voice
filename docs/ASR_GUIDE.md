@@ -17,6 +17,15 @@ DSP (speech chunks) ──ZeroMQ──▶ ASR (src/asr/) ──ZeroMQ──▶ N
 * It writes what was said, nothing more: no normalization (numbers stay
   words), no intent detection, no synonym mapping ("knife" stays "knife").
   That is NLU's job.
+* **Spoken end word (optional):** a command can end with **"execute"**,
+  **"over"** or **"now"** ("next slice now", "zoom in two x execute"). ASR
+  sends the command as soon as it hears the word – without waiting for the
+  DSP's `"end"` – and leaves the word out of `text`. This helps when noise
+  keeps the DSP's speech detector on (otherwise the command waits until
+  the noise stops, up to 15 s). In a quiet room it is not faster: the
+  `"end"` comes just as quickly, and saying the word takes time. The word
+  only counts after a command word ("now" alone, or "now zoom in", does
+  nothing). Leave a short pause after it before the next command.
 * Engine: **Vosk** (`vosk-model-small-en-us-0.15`) with a grammar of our
   command words, plus a free-speech pass for the text after "log event" /
   "record milestone". Fully offline. About 0.07 s per command on a laptop,
@@ -76,7 +85,8 @@ One message per utterance, UTF-8 JSON:
     {"word": "two", "start": 0.96, "end": 1.23, "confidence": 0.5},
     {"word": "x", "start": 1.23, "end": 1.74, "confidence": 1.0}
   ],
-  "segment_start": 1792150493.32
+  "segment_start": 1792150493.32,
+  "end_reason": "dsp_end"
 }
 ```
 
@@ -86,6 +96,7 @@ One message per utterance, UTF-8 JSON:
 | `confidence` | 0–1, mean word confidence. **`null`** when `text` is empty. |
 | `words` | The words of `text` with timings in seconds from `segment_start` and per-word confidence. |
 | `segment_start` | Unix time (seconds) when the speech started. Use it for `latency_ms`. |
+| `end_reason` | Why the utterance ended: `"keyword"` (spoken end word), `"dsp_end"` (your `"end"` message), `"gap"`, `"timeout"` or `"max_length"` (15 s). For logs only – NLU can ignore it. `null` when a file is transcribed. |
 
 Until 2026-10-28 there was also a `normalized` field. It is gone: NLU is
 the only stage that normalizes (team evaluation, `evaluations/asr/README.md`,

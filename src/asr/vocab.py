@@ -100,6 +100,13 @@ GRAMMAR_MODIFIER_WORDS = ["little", "bit", "okay", "could", "you"]
 # is not a command (non-command set).
 GRAMMAR_CONTEXT_WORDS = ["patient", "active", "current", "immediately", "robotic", "position",
                          "surgical field", "safe height"]
+# Words the surgeon can say after a command to send it at once, without
+# waiting for the silence ("next slice now", "zoom in two x execute"; team
+# evaluation "Priority 2", decision 2026-10-28). Not "end": it sounds like
+# "and" ("slice one hundred and twenty" could be cut at "one hundred").
+# The stream checks Vosk's partial result after every chunk
+# (ends_with_delimiter); the engine removes the word from the output.
+DELIMITERS = ["execute", "over", "now"]
 
 # One natural sentence with the key terms, for Whisper's initial_prompt (it
 # nudges spelling and word choice toward these terms). Written from the
@@ -137,7 +144,7 @@ def vosk_grammar_phrases() -> list[str]:
     only occurs inside them is not added alone: with "to" as a single word
     next to "two", the grammar heard "go two slice 45" (dev set, Phase B)."""
     phrases: set[str] = set()
-    single: set[str] = set(GRAMMAR_FUNCTION_WORDS + GRAMMAR_NUMBER_WORDS + GRAMMAR_MODIFIER_WORDS)
+    single: set[str] = set(GRAMMAR_FUNCTION_WORDS + GRAMMAR_NUMBER_WORDS + GRAMMAR_MODIFIER_WORDS + DELIMITERS)
     for term in COMMAND_VOCAB + GRAMMAR_CONTEXT_WORDS:
         spoken = SPOKEN_FORMS.get(term, term.lower())
         if " " in spoken:
@@ -187,6 +194,18 @@ def find_terms(normalized_text: str) -> list[str]:
                 found.append(tokens[i])
             i += 1
     return found
+
+
+def ends_with_delimiter(words: list[str]) -> bool:
+    """True if the last word heard is a delimiter and a command word comes
+    before it: "next slice now" yes; "now" alone, "now zoom in" (not last)
+    and "[unk] five now" (only a number) no. `words` as Vosk writes them,
+    "[unk]" and sound-alike spellings ("c t") included."""
+    heard = [w for w in words if w != "[unk]"]
+    if len(heard) < 2 or heard[-1] not in DELIMITERS:
+        return False
+    before = find_terms(normalize(" ".join(heard[:-1])))
+    return any(not _NUMBER.fullmatch(term) for term in before)
 
 
 def term_counts(ref_normalized: str, hyp_normalized: str) -> tuple[int, int, int]:

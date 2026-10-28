@@ -21,6 +21,13 @@ Setup choices, each found while benchmarking (details in docs/ASR_FINDINGS.md):
 - Word times keep counting across `Reset()` (the 2nd clip's first word
   starts at "length of clip 1 + ..."), so `_Recognizer` shifts them back to
   start at 0 for every utterance.
+- Fed chunk by chunk (`accept_chunk`, for the spoken delimiter), Vosk is
+  only given whole 0.2 s steps, the rest waits for the next chunk. Vosk
+  works in 0.2 s steps internally and adapts to the speaker after each
+  one; 0.5 s chunks moved those steps and changed the words of 3 of 99
+  clips ("scalpel" -> "scan home"). With whole steps the result equals
+  decoding the clip in one go on all 99 clips (2026-10-28), so the
+  benchmark measures exactly what the stream does.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ import vosk
 
 from asr.audio import TARGET_SR
 from asr.schema import ASRResult, WordInfo
-from asr.vocab import LOG_HEADER_WORDS, LOG_TRIGGERS, SPOKEN_FORMS
+from asr.vocab import LOG_HEADER_WORDS, LOG_TRIGGERS, SPOKEN_FORMS, ends_with_delimiter
 
 MODELS_DIR = Path(__file__).resolve().parents[1] / "models"  # src/asr/models (gitignored)
 MODEL_NAME = "vosk-model-small-en-us-0.15"
@@ -76,9 +83,17 @@ def _get_model() -> vosk.Model:
     return _cached_model
 
 
+STEP_BYTES = int(0.2 * TARGET_SR) * 2  # Vosk's internal step: 0.2 s of int16 samples
+
+
+def _to_pcm(audio: np.ndarray) -> bytes:
+    return (audio * 32768.0).clip(-32768, 32767).astype(np.int16).tobytes()
+
+
 class _Recognizer:
-    """A KaldiRecognizer that remembers how much audio it has been fed, so
-    word times can be made relative to the start of each utterance."""
+    """A KaldiRecognizer fed one utterance at a time, in pieces of whole
+    0.2 s steps (see module notes). Remembers how much audio it has been
+    fed, so word times can be made relative to the start of each utterance."""
 
     def __init__(self, model: vosk.Model, grammar: Optional[list[str]] = None) -> None:
         if grammar is None:
@@ -86,20 +101,45 @@ class _Recognizer:
         else:
             self.kaldi = vosk.KaldiRecognizer(model, TARGET_SR, json.dumps(grammar))
         self.kaldi.SetWords(True)
-        self.seconds_fed = 0.0
+        self.seconds_fed = 0.0       # all audio given to Vosk since the start
+        self.utterance_start = 0.0   # seconds_fed when the current utterance began
+        self.waiting = b""           # less than one step, kept for the next piece
 
-    def decode(self, pcm: bytes) -> list[dict]:
-        """Run over a whole utterance; returns Vosk's word list
-        ({"word", "start", "end", "conf"}, "[unk]" included)."""
+    def _feed(self, pcm: bytes) -> None:
+        # AcceptWaveform returns True when Vosk itself guesses the utterance
+        # is over; ignored - the stream decides (DSP "end", delimiter, ...).
         self.kaldi.AcceptWaveform(pcm)
+        self.seconds_fed += len(pcm) / 2 / TARGET_SR  # 2 bytes per int16 sample
+
+    def accept(self, pcm: bytes) -> None:
+        data = self.waiting + pcm
+        whole = len(data) - len(data) % STEP_BYTES
+        self.waiting = data[whole:]
+        if whole:
+            self._feed(data[:whole])
+
+    def partial_words(self) -> list[str]:
+        """The words heard so far in this utterance (best guess, may change)."""
+        return json.loads(self.kaldi.PartialResult()).get("partial", "").split()
+
+    def finish(self) -> list[dict]:
+        """End the utterance; returns Vosk's word list ({"word", "start",
+        "end", "conf"}, "[unk]" included), times from its start."""
+        if self.waiting:
+            self._feed(self.waiting)
+            self.waiting = b""
         result = json.loads(self.kaldi.FinalResult())
         self.kaldi.Reset()
-        offset = self.seconds_fed
-        self.seconds_fed += len(pcm) / 2 / TARGET_SR  # 2 bytes per int16 sample
+        offset, self.utterance_start = self.utterance_start, self.seconds_fed
         return [
             {**w, "start": round(w["start"] - offset, 3), "end": round(w["end"] - offset, 3)}
             for w in result.get("result", [])
         ]
+
+    def decode(self, pcm: bytes) -> list[dict]:
+        """A whole utterance at once."""
+        self.accept(pcm)
+        return self.finish()
 
 
 def _starts_log_event(words: list[dict]) -> bool:
@@ -160,6 +200,15 @@ def clean_words(vosk_words: list[dict]) -> list[dict]:
     return out
 
 
+def drop_delimiter(words: list[dict]) -> list[dict]:
+    """Without a spoken delimiter at the end ("next slice now" -> "next
+    slice"): it only tells ASR to send, it is not part of the command. Kept
+    when no command word comes before it (vocab.ends_with_delimiter)."""
+    if ends_with_delimiter([w["word"] for w in words]):
+        return words[:-1]
+    return words
+
+
 class VoskEngine:
     name = "vosk"
 
@@ -192,17 +241,23 @@ class VoskEngine:
         else:
             self.recognizer = _Recognizer(self.model)
 
-    def transcribe(self, audio: np.ndarray, sr: int = 16000) -> ASRResult:
-        if sr != TARGET_SR:
-            raise ValueError(f"VoskEngine expects {TARGET_SR} Hz audio, got {sr} Hz")
-        pcm = (audio * 32768.0).clip(-32768, 32767).astype(np.int16).tobytes()
-        vosk_words = self.recognizer.decode(pcm)
+    def accept_chunk(self, chunk: np.ndarray) -> list[str]:
+        """Feed the next piece of the current utterance (16 kHz float32);
+        returns the words heard so far, "[unk]" included - the stream looks
+        for a spoken delimiter in them."""
+        self.recognizer.accept(_to_pcm(chunk))
+        return self.recognizer.partial_words()
+
+    def finish(self, audio: np.ndarray) -> ASRResult:
+        """End the current utterance. `audio` = all of it (the chunks given
+        to accept_chunk), for the free-form pass of log_event."""
+        vosk_words = self.recognizer.finish()
         if self.freeform is not None and _starts_log_event(vosk_words):
-            vosk_words = splice_log_event(vosk_words, self.freeform.decode(pcm))
+            vosk_words = splice_log_event(vosk_words, self.freeform.decode(_to_pcm(audio)))
 
         words = [
             WordInfo(word=w["word"], start=w["start"], end=w["end"], confidence=w["conf"])
-            for w in clean_words(vosk_words)
+            for w in drop_delimiter(clean_words(vosk_words))
         ]
         confidence = float(np.mean([w.confidence for w in words])) if words else None
 
@@ -213,3 +268,11 @@ class VoskEngine:
             words=words,
             segment_start=0.0,  # filled in by the caller from the DSP timestamp
         )
+
+    def transcribe(self, audio: np.ndarray, sr: int = 16000) -> ASRResult:
+        """A whole utterance at once (files, benchmark) - same result as
+        feeding it chunk by chunk."""
+        if sr != TARGET_SR:
+            raise ValueError(f"VoskEngine expects {TARGET_SR} Hz audio, got {sr} Hz")
+        self.recognizer.accept(_to_pcm(audio))
+        return self.finish(audio)
