@@ -202,13 +202,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input",
         type=str,
-        default=str(REPO_ROOT / "data" / "asr" / "test_clip_event.wav"),
+        default=str(REPO_ROOT / "data" / "asr" / "sample_02.wav"),
         help="Input noisy wav file path",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default=str(CURRENT_DIR / "audio" / "clean_clip.wav"),
+        default=str(CURRENT_DIR / "audio" / "clean_gtcrn_sample_2.wav"),
         help="Output enhanced wav file path",
     )
     args = parser.parse_args()
