@@ -46,7 +46,7 @@ class SileroVAD:
                 speech_windows += 1
 
         # Clear up memory of RNN after each chunk
-        self.model.reset_states()
+        #self.model.reset_states()
 
         # Windown Voting: at least 3 windows having voice
         return speech_windows >= 3

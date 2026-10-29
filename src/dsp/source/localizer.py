@@ -121,7 +121,7 @@ class SRPLocalizer:
             power_padded, 
             distance=15,
             prominence=0.25,
-            height=0.35
+            height=0.5
         )
 
         # Map padded peak indices back to [0, 360] degrees and deduplicate
