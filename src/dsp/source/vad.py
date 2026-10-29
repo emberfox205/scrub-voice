@@ -35,12 +35,20 @@ class SileroVAD:
         tensor_audio = torch.from_numpy(ref_audio).float()
         num_samples = len(tensor_audio)
 
+        speech_windows = 0
+
         for start in range(0, num_samples - self.window_size_samples + 1, self.window_size_samples):
             window = tensor_audio[start : start + self.window_size_samples]
             with torch.no_grad():
                 speech_prob = self.model(window, self.sample_rate).item()
 
             if speech_prob >= self.threshold:
-                return True
+                speech_windows += 1
+
+        # Clear up memory of RNN after each chunk
+        self.model.reset_states()
+
+        # Windown Voting: at least 3 windows having voice
+        return speech_windows >= 3
      
         return False

@@ -35,7 +35,7 @@ def initialize_system():
 
     # 1. Gate 1: Silero VAD
     print("⏳ [1/3] Initializing Silero VAD (Gate 1)...")
-    vad = SileroVAD(sample_rate=SAMPLE_RATE, threshold=0.35)
+    vad = SileroVAD(sample_rate=SAMPLE_RATE, threshold=0.50)
 
     # PyTorch cold-start warmup
     dummy_chunk = np.zeros((6, 8000), dtype=np.float32)
