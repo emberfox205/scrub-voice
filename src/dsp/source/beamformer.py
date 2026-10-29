@@ -85,7 +85,7 @@ class DASBeamformer:
             Masked complex STFT tensor of shape (num_targets, num_freqs, num_frames)
         """
         num_targets = Y_stft.shape[0]
-        
+
         # Shape: (num_targets, num_freqs, num_frames)
         beam_power = np.abs(Y_stft) ** 2
 
@@ -136,11 +136,21 @@ class DASBeamformer:
 
         num_targets = len(angles_list)
         num_samples = audio_chunk.shape[1]
-        num_frames = max(0, 1 + (num_samples - self.frame_size) // self.hop_size)
 
-        if num_frames == 0:
+        if num_samples < self.frame_size:
             zeros = np.zeros(num_samples, dtype=np.float32)
             return zeros if is_single else [zeros for _ in range(num_targets)]
+
+                # -------------------------------------------------------------
+        # Center-Padding: Symmetrically pad boundaries (similar to PyTorch center=True)
+        # Guarantees all original samples fall inside the flat COLA reconstruction zone,
+        # eliminating the 64-sample silence gap and boundary fading.
+        # -------------------------------------------------------------
+        pad_left = self.frame_size // 2  # 256 samples
+        rem = (pad_left + num_samples - self.frame_size) % self.hop_size
+        pad_right = (self.hop_size - rem) % self.hop_size + (self.frame_size // 2)
+        padded_chunk = np.pad(audio_chunk, ((0, 0), (pad_left, pad_right)), mode="reflect")
+        num_frames = 1 + (padded_chunk.shape[1] - self.frame_size) // self.hop_size
 
         # 3. Steering weights Retrieval for target angle (num_targets, num_mics, num_freqs)
         target_indices = [int(round(ang)) % 360 for ang in angles_list]
@@ -151,7 +161,7 @@ class DASBeamformer:
 
         for frame_idx in range(num_frames):
             start = frame_idx * self.hop_size
-            frame = audio_chunk[:, start : start + self.frame_size] * self.window
+            frame = padded_chunk[:, start : start + self.frame_size] * self.window
 
             # Multi-channel FFT: Shape (num_mics, num_freqs)
             X = np.fft.rfft(frame, axis = 1)
@@ -186,15 +196,10 @@ class DASBeamformer:
         safe_window_sum = np.maximum(window_sum, 0.1 * np.max(window_sum))
         separated_audio /= safe_window_sum[None, :]
 
-        # 7. Exact length matching
-        copy_len = min(num_samples, output_len)
-        results = []
-        for k in range(num_targets):
-            out = np.zeros(num_samples, dtype=np.float32)
-            out[:copy_len] = separated_audio[k, :copy_len]
-            results.append(out)
-
+        # 7. Extract exact original chunk (guaranteed 100% non-zero, COLA preserved)
+        out = separated_audio[:, pad_left : pad_left + num_samples]
+    
         # If user passed a single float, return a single array; else return the list
-        return results[0] if is_single else results
+        return out[0] if is_single else list(out)
  
 
