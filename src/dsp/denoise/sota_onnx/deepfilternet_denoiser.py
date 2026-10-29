@@ -7,6 +7,8 @@ import torchaudio
 from torch import Tensor
 
 CURRENT_DIR = Path(__file__).resolve().parent
+DENOISE_DIR = CURRENT_DIR.parent
+REPO_ROOT = CURRENT_DIR.parents[3]
 
 def hz_to_erb(freq):
     return 21.4 * torch.log10(1.0 + 0.00437 * freq)
@@ -88,10 +90,10 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
 
 
 try:
-    from src.dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
+    from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
 except ImportError:
     try:
-        from dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
+        from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
     except ImportError:
         DuoFilterDenoiser = None  # type: ignore
 
@@ -196,9 +198,9 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
     # Standalone Demo / Benchmark
     # ---------------------------------------------------------
-    ONNX_MODEL_PATH = str(CURRENT_DIR / "deepfilternet.onnx")
-    INPUT_WAV = str(CURRENT_DIR / "audio" / "noise_audio.wav")
-    OUTPUT_WAV = str(CURRENT_DIR / "audio" / "clean_audio.wav")
+    ONNX_MODEL_PATH = str(DENOISE_DIR / "onnx" / "deepfilternet.onnx")
+    INPUT_WAV = str(DENOISE_DIR / "audio" / "noise_audio.wav")
+    OUTPUT_WAV = str(DENOISE_DIR / "audio" / "clean_audio.wav")
 
     denoiser = DeepFilterDenoiser(model_path=ONNX_MODEL_PATH)
     audio_data, sr = sf.read(INPUT_WAV, dtype="float32")
