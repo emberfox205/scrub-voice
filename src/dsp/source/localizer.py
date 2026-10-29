@@ -120,7 +120,7 @@ class SRPLocalizer:
         peaks_padded, _ = find_peaks(
             power_padded, 
             distance=15,
-            prominence=0.25,
+            prominence=0.3,
             height=0.5
         )
 
