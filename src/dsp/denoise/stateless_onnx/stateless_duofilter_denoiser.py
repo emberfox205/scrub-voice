@@ -13,8 +13,9 @@ import torchaudio
 from torch import Tensor
 
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parents[2]
-DEFAULT_MODEL_PATH = CURRENT_DIR / "onnx" / "duofilter.onnx"
+DENOISE_DIR = CURRENT_DIR.parent
+REPO_ROOT = CURRENT_DIR.parents[3]
+DEFAULT_MODEL_PATH = DENOISE_DIR / "onnx" / "duofilter.onnx"
 
 
 # ---------------------------------------------------------
@@ -93,7 +94,7 @@ class DuoFilterDenoiser:
     4. Optional phase-preservation (magnitude-masking mode for high reverberation environments).
     """
 
-    DEFAULT_ONNX_PATH = CURRENT_DIR / "onnx" / "duofilter.onnx"
+    DEFAULT_ONNX_PATH = DEFAULT_MODEL_PATH
 
     def __init__(
         self,
@@ -371,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=str,
-        default=str(CURRENT_DIR / "audio" / "clean_clip_event.wav"),
+        default=str(DENOISE_DIR / "audio" / "clean_clip_event.wav"),
         help="Output enhanced wav file path",
     )
     parser.add_argument(
