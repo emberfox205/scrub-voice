@@ -149,7 +149,7 @@ def test_beamform_multiple_targets(bf):
     assert res[0].dtype == np.float32
     assert res[1].dtype == np.float32
 
-def test_spatial_masking_cross_talk_reduction(bf):
+def test_wiener_masking_cross_talk_reduction(bf):
     """
     Simulate two simultaneous speakers at 60° and 180°.
     Verify that spatial masking suppresses speaker 2 from stream 1.
@@ -158,12 +158,67 @@ def test_spatial_masking_cross_talk_reduction(bf):
     audio_spk2, _ = make_simulated_source(bf, angle_deg=180.0)
     mixed = audio_spk1 + audio_spk2
 
-    streams = bf.beamform(mixed, target_angles=[60.0, 180.0], apply_spatial_mask=True)
+    streams = bf.beamform(mixed, target_angles=[60.0, 180.0], apply_wiener_mask=True)
     assert len(streams) == 2
     assert streams[0].shape == (8000,)
     assert streams[1].shape == (8000,)
     assert not np.isnan(streams[0]).any()
     assert not np.isnan(streams[1]).any()  
+
+def test_wiener_mask_actually_attenuates_interferer(bf):
+    """
+    Verify that enabling the Wiener mask strictly reduces 
+    the energy of the interfering speaker in the target beam.
+    """
+    audio_spk1, _ = make_simulated_source(bf, angle_deg=60.0)
+    audio_spk2, _ = make_simulated_source(bf, angle_deg=180.0)
+
+    # When spk1 is silent, check how much of spk2 leaks through beam 1
+    # Feed ONLY speaker 2 into beamformer steered at [60, 180]
+    leak_raw = bf.beamform(audio_spk2, target_angles=[60.0, 180.0], apply_wiener_mask=False)[0]
+    leak_wiener = bf.beamform(audio_spk2, target_angles=[60.0, 180.0], apply_wiener_mask=True)[0]
+
+    raw_leak_energy = np.mean(leak_raw[512:-512] ** 2)
+    wiener_leak_energy = np.mean(leak_wiener[512:-512] ** 2)
+
+    # Wiener mask must reduce the leak energy by at least 3x (> 5 dB improvement over pure DAS)
+    assert wiener_leak_energy <= raw_leak_energy / 3.0, (
+        f"Wiener mask failed to reduce leakage by at least 3x: "
+        f"raw={raw_leak_energy:.6f}, wiener={wiener_leak_energy:.6f}, "
+        f"ratio={raw_leak_energy / (wiener_leak_energy + 1e-12):.2f}x"
+    )
+
+    def test_wiener_mask_floor_and_bounds(bf):
+        """
+        - Test the wiener_mask method directly with synthetic STFT tensors
+        - Verify that gain values stay between floor and 1.0
+        """
+        # 2 targets, 257 freqs, 30 frames
+        # Target 0 has high power, Target 1 has near-zero power   
+        Y_stft = np.zeros((2, 257, 30), dtype=np.complex64)
+        Y_stft[0, :, :] = 10.0 + 0j
+        Y_stft[1, :, :] = 0.01 + 0j
+
+        masked = bf.wiener_mask(Y_stft.copy())
+
+        # Target 0 should be largely untouched (near 10.0)
+        assert np.allclose(np.abs(masked[0]), 10.0, rtol=0.1)
+
+        # Target 1 should be clamped at exactly floor (0.10 of its energy)
+        assert np.all(np.abs(masked[1]) >= 0.01 * 0.10 - 1e-6)    
+
+    def test_wiener_mask_three_speakers(bf):
+        # Passing 3 distinct angles must return 3 valid streams
+        chunk = np.random.randn(6, 8000).astype(np.float32)
+        angles = [0.0, 120.0, 240.0]
+
+        streams = bf.beamform(chunk, target_angles=angles, apply_wiener_mask=True)
+
+        assert len(streams) == 3
+        for s in streams:
+            assert s.shape == (8000,)
+            assert s.dtype == np.float32
+            assert not np.isnan(s).any() 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
