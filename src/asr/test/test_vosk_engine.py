@@ -11,13 +11,51 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # src/ on sys.path, like the scripts
 
 from asr.audio import load_audio
-from asr.engines.vosk_engine import MODEL_NAME, MODELS_DIR, VoskEngine, _starts_log_event, splice_log_event
+from asr.engines.vosk_engine import (MODEL_NAME, MODELS_DIR, VoskEngine, _starts_log_event, clean_words,
+                                     drop_delimiter, splice_log_event)
+from asr.vocab import vosk_grammar_phrases
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def words(*items: tuple[str, float, float]) -> list[dict]:
     return [{"word": w, "start": s, "end": e, "conf": 1.0} for w, s, e in items]
+
+
+class CleanWordsTest(unittest.TestCase):
+    def test_sound_alike_spellings_are_joined(self):
+        cleaned = clean_words(words(("open", 0.0, 0.3), ("c", 0.3, 0.5), ("t", 0.5, 0.7), ("scan", 0.7, 1.0)))
+        self.assertEqual([w["word"] for w in cleaned], ["open", "ct", "scan"])
+        for spoken, word in [("m r i", "mri"), ("x ray", "x-ray"), ("hemo stat", "hemostat")]:
+            with self.subTest(spoken=spoken):
+                parts = words(*[(p, i, i + 1) for i, p in enumerate(spoken.split())])
+                self.assertEqual([w["word"] for w in clean_words(parts)], [word])
+
+    def test_joined_word_spans_its_parts_with_lowest_confidence(self):
+        parts = [{"word": "hemo", "start": 1.0, "end": 1.3, "conf": 0.9},
+                 {"word": "stat", "start": 1.3, "end": 1.6, "conf": 0.6}]
+        self.assertEqual(clean_words(parts), [{"word": "hemostat", "start": 1.0, "end": 1.6, "conf": 0.6}])
+
+    def test_unk_is_dropped(self):
+        cleaned = clean_words(words(("[unk]", 0.0, 0.2), ("pass", 0.2, 0.5), ("[unk]", 0.5, 0.9)))
+        self.assertEqual([w["word"] for w in cleaned], ["pass"])
+        self.assertEqual(clean_words(words(("[unk]", 0.0, 1.0))), [])
+
+    def test_numbers_and_synonyms_stay_as_said(self):
+        said = words(("zoom", 0, 1), ("in", 1, 2), ("two", 2, 3), ("x", 3, 4), ("please", 4, 5), ("knife", 5, 6))
+        self.assertEqual(clean_words(said), said)
+
+
+class DropDelimiterTest(unittest.TestCase):
+    def test_delimiter_after_a_command_is_removed(self):
+        said = words(("next", 0, 1), ("slice", 1, 2), ("now", 2, 3))
+        self.assertEqual([w["word"] for w in drop_delimiter(said)], ["next", "slice"])
+
+    def test_other_delimiters_are_kept(self):
+        for said in (words(("now", 0, 1)),                                  # nothing before it
+                     words(("now", 0, 1), ("zoom", 1, 2), ("in", 2, 3))):  # not at the end
+            with self.subTest(said=[w["word"] for w in said]):
+                self.assertEqual(drop_delimiter(said), said)
 
 
 class SpliceTest(unittest.TestCase):
@@ -67,6 +105,25 @@ class RealClipTest(unittest.TestCase):
         self.assertTrue(first.words)
         self.assertEqual(first.to_json(), second.to_json())
         self.assertLess(first.words[-1].end, 4.0 + 0.01)
+
+    def test_chunk_by_chunk_equals_one_go(self):
+        # The stream feeds 0.5 s chunks; the benchmark transcribes in one go.
+        # Both must give the same words, times and confidences. 10 s of read
+        # speech: unaligned 0.5 s chunks changed words here (2026-10-28).
+        engine = VoskEngine(grammar=vosk_grammar_phrases())
+        audio = load_audio(REPO_ROOT / "data" / "asr" / "sample_01.wav")[: 16000 * 10]
+        whole = engine.transcribe(audio)
+        for i in range(0, len(audio), 8000):
+            engine.accept_chunk(audio[i : i + 8000])
+        chunked = engine.finish(audio)
+        self.assertTrue(whole.words)
+        self.assertEqual(chunked.to_json(), whole.to_json())
+
+    def test_every_grammar_word_is_in_the_model_dictionary(self):
+        # The engine silently drops phrases with unknown words; a new
+        # synonym missing from the dictionary would never be recognized.
+        engine = VoskEngine(grammar=vosk_grammar_phrases())
+        self.assertEqual(engine.dropped_phrases, [])
 
 
 if __name__ == "__main__":

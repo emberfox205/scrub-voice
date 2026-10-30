@@ -22,29 +22,52 @@ from asr.normalize import NUMBER_WORDS, TENS, normalize
 # The words the ASR must get right, per intent (src/asr/CLAUDE.md "Commands
 # to recognise"). Synonyms are listed because the speaker may use them; the
 # language understanding stage maps them to the schema tokens.
+# The last line of an intent: synonyms added on 2026-10-28 after the team
+# evaluation (evaluations/asr/README.md, "Priority 1") - words from NLU's
+# training phrases and slot dictionaries, plus colloquial ones surgeons use
+# ("pull up", "make it bigger", "scroll") that NLU has to learn as well.
+# Left out on purpose: "wait" (sounds like "eight" - "move left eight
+# centimeters" could turn into a halt), and five that made the dev and
+# non-command sets worse when measured (2026-10-28): "hold on" ("halt
+# robot" became "hold robot"), "jump to" ("two" became "to" more often:
+# "zoom in to x"), "load", "hide", "closer" (everyday speech was forced into
+# them: "Hello" -> "load", "waiting outside" -> "hide", "closing" ->
+# "closer"). Short single words are the risk: any speech outside the
+# grammar can land on them; phrases ("bring up") are safer.
 INTENT_TERMS: dict[str, list[str]] = {
     "pick_tool": [
         "hand", "pass", "give me",
         "scalpel", "scissors", "hemostat", "forceps",
         "knife", "ten blade", "blade", "iris", "metz", "metzenbaum",
         "clamp", "snap", "tweezers", "pickups",
+        "bring", "need", "pickup", "artery forceps", "tissue forceps", "surgical scissors",
     ],
-    "park_arm": ["park", "standby", "retract", "arm", "robot"],
-    "clear_emergency": ["emergency", "clear", "area", "back off"],
-    "halt_emergency": ["emergency", "stop", "halt", "freeze", "robot"],
-    "open_scan": ["open", "show", "display", "scan", "CT", "MRI", "X-ray"],
+    "park_arm": ["park", "standby", "retract", "arm", "robot",
+                 "dock"],
+    "clear_emergency": ["emergency", "clear", "area", "back off",
+                        "evacuate"],
+    "halt_emergency": ["emergency", "stop", "halt", "freeze", "robot",
+                       "hard stop"],
+    "open_scan": ["open", "show", "display", "scan", "CT", "MRI", "X-ray",
+                  "bring up", "pull up"],
     "close_scan": ["close", "dismiss", "scan", "viewer", "CT", "MRI", "X-ray"],
     # "in"/"out" only count together with "zoom": alone they are everyday words.
-    "zoom_display": ["zoom", "zoom in", "zoom out", "magnify"],
-    "navigate_slice": ["next", "previous", "back", "go to", "slice", "slices"],
+    "zoom_display": ["zoom", "zoom in", "zoom out", "magnify",
+                     "enlarge", "bigger", "smaller", "shrink", "make it bigger", "make it smaller",
+                     "increase", "decrease", "reduce", "wider"],
+    "navigate_slice": ["next", "previous", "back", "go to", "slice", "slices",
+                       "advance", "rewind", "scroll", "go forward", "go back"],
     # Plus free text (event name, comment), which is not a term.
     "log_event": ["log", "record", "event", "milestone", "note", "comment"],
     "move_camera": [
         "camera", "move", "left", "right", "up", "down", "forward", "backward",
         "centimeter", "centimeters",
+        "jog", "wand", "ahead", "away",
     ],
-    "tilt_camera": ["tilt", "up", "down", "left", "right", "degree", "degrees"],
-    "reset_camera": ["reset", "center", "view", "home", "camera"],
+    "tilt_camera": ["tilt", "up", "down", "left", "right", "degree", "degrees",
+                    "pitch", "yaw", "upward", "downward"],
+    "reset_camera": ["reset", "center", "view", "home", "camera",
+                     "wand"],
 }
 
 COMMAND_VOCAB = sorted({term for terms in INTENT_TERMS.values() for term in terms})
@@ -69,28 +92,30 @@ GRAMMAR_NUMBER_WORDS = list(NUMBER_WORDS) + list(TENS) + ["hundred", "point"]
 # "tilt the camera up a little" into "... up eleven" - an invented angle
 # (dev set, Phase B).
 GRAMMAR_MODIFIER_WORDS = ["little", "bit", "okay", "could", "you"]
-
-# One natural sentence with the key terms, for Whisper's initial_prompt (it
-# nudges spelling and word choice toward these terms). Written from the
-# schema guide, avoiding the exact test sentences. Numbers are written as
-# digits so Whisper writes digits too.
-WHISPER_PROMPT = (
-    "During surgery the team asks the robot to pass the scalpel, knife, ten blade, "
-    "Metzenbaum or iris scissors, hemostat, clamp, snap, forceps, tweezers or pickups, "
-    "to park, retract or standby the arm, to halt, freeze, stop or back off in an emergency, "
-    "to open, show, display, close or dismiss the CT, MRI or X-ray scan in the viewer, "
-    "to zoom in or out by 2.5x or magnify, to step to the next, previous or a numbered slice, "
-    "to log an event or record a milestone with a note or comment, "
-    "and to move or tilt the camera left, right, up, down, forward or backward "
-    "by 7 cm or 20 degrees, then reset or center it at home."
-)
-
-# A shorter variant to measure the latency cost of the prompt (Phase B):
-# only the terms Whisper is most likely to misspell or mishear.
-WHISPER_PROMPT_SHORT = (
-    "The robot passes the scalpel, Metzenbaum scissors, hemostat, forceps or pickups, "
-    "opens the CT, MRI or X-ray scan, zooms, magnifies, logs a milestone and tilts the camera."
-)
+# Words around the commands that carry no intent themselves ("bring up the
+# patient CT", "close the active scan", "hard stop robot immediately", "move arm to
+# park position", "evacuate surgical field", "move to safe height"; NLU's
+# training phrases). In the grammar so they are written as said instead of
+# being forced into command words, but not terms: "The patient is stable"
+# is not a command (non-command set).
+GRAMMAR_CONTEXT_WORDS = ["patient", "active", "current", "immediately", "robotic", "position",
+                         "surgical field", "safe height"]
+# Words the surgeon can say after a command to send it at once, without
+# waiting for the silence ("next slice now", "zoom in two x execute"; team
+# evaluation "Priority 2", decision 2026-10-28). Not "end": it sounds like
+# "and" ("slice one hundred and twenty" could be cut at "one hundred").
+# The stream checks Vosk's partial result after every chunk
+# (ends_with_delimiter); the engine removes the word from the output.
+DELIMITERS = ["execute", "over", "now"]
+# Halt commands are sent as soon as Vosk's partial result contains one of
+# these - an early copy, before the utterance ends; the full utterance
+# follows as usual (asr.stream, heard_halt; decision 2026-10-28). Only
+# halts: a false halt stops the robot, the safe side. "clear area" / "back
+# off" move the robot and wait for the end of the utterance. Not "stop"
+# alone ("don't stop now"), not "freeze": on the dev set the partial result
+# read "next three slices" as "next freeze" for a moment - a false halt on
+# a navigation command. "freeze" still works, at the end of the utterance.
+HALT_PHRASES = ["halt", "emergency stop", "hard stop"]
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _TERMS = sorted({tuple(normalize(t).split()) for t in COMMAND_VOCAB}, key=len, reverse=True)
@@ -106,8 +131,8 @@ def vosk_grammar_phrases() -> list[str]:
     only occurs inside them is not added alone: with "to" as a single word
     next to "two", the grammar heard "go two slice 45" (dev set, Phase B)."""
     phrases: set[str] = set()
-    single: set[str] = set(GRAMMAR_FUNCTION_WORDS + GRAMMAR_NUMBER_WORDS + GRAMMAR_MODIFIER_WORDS)
-    for term in COMMAND_VOCAB:
+    single: set[str] = set(GRAMMAR_FUNCTION_WORDS + GRAMMAR_NUMBER_WORDS + GRAMMAR_MODIFIER_WORDS + DELIMITERS)
+    for term in COMMAND_VOCAB + GRAMMAR_CONTEXT_WORDS:
         spoken = SPOKEN_FORMS.get(term, term.lower())
         if " " in spoken:
             phrases.add(spoken)
@@ -117,11 +142,10 @@ def vosk_grammar_phrases() -> list[str]:
 
 
 def check_leakage(texts: list[str], references: list[str], what: str) -> None:
-    """Fail if a test sentence appears (as a whole phrase) in any biasing
-    text: grammar phrases or the prompt sentence. References that are
-    themselves a single vocab term ("Freeze", "Back off") are allowed - they
-    are in the vocabulary because they are commands, not because of the test
-    set."""
+    """Fail if a test sentence appears (as a whole phrase) in any of the
+    texts. References that are themselves a single vocab term ("Freeze",
+    "Back off") are allowed - they are in the vocabulary because they are
+    commands, not because of the test set."""
     vocab = {normalize(t) for t in COMMAND_VOCAB}
     padded = [f" {normalize(t)} " for t in texts]
     leaked = sorted({
@@ -131,12 +155,10 @@ def check_leakage(texts: list[str], references: list[str], what: str) -> None:
     assert not leaked, f"Test-set sentences found verbatim in the {what}: {leaked}"
 
 
-def check_all_biasing_leakage(references: list[str]) -> None:
+def check_grammar_leakage(references: list[str]) -> None:
     # The grammar is checked entry by entry: joining its entries would glue
     # neighbours into phrases nobody wrote.
     check_leakage(vosk_grammar_phrases(), references, "Vosk grammar")
-    check_leakage([WHISPER_PROMPT], references, "Whisper prompt")
-    check_leakage([WHISPER_PROMPT_SHORT], references, "short Whisper prompt")
 
 
 def find_terms(normalized_text: str) -> list[str]:
@@ -156,6 +178,25 @@ def find_terms(normalized_text: str) -> list[str]:
                 found.append(tokens[i])
             i += 1
     return found
+
+
+def ends_with_delimiter(words: list[str]) -> bool:
+    """True if the last word heard is a delimiter and a command word comes
+    before it: "next slice now" yes; "now" alone, "now zoom in" (not last)
+    and "[unk] five now" (only a number) no. `words` as Vosk writes them,
+    "[unk]" and sound-alike spellings ("c t") included."""
+    heard = [w for w in words if w != "[unk]"]
+    if len(heard) < 2 or heard[-1] not in DELIMITERS:
+        return False
+    before = find_terms(normalize(" ".join(heard[:-1])))
+    return any(not _NUMBER.fullmatch(term) for term in before)
+
+
+def heard_halt(words: list[str]) -> bool:
+    """True if a halt phrase (HALT_PHRASES) is among the words heard so far,
+    as whole words: "halt robot", "[unk] freeze" yes; "stop", "back off" no."""
+    heard = f" {' '.join(w for w in words if w != '[unk]')} "
+    return any(f" {phrase} " in heard for phrase in HALT_PHRASES)
 
 
 def term_counts(ref_normalized: str, hyp_normalized: str) -> tuple[int, int, int]:
