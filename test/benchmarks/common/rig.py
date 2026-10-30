@@ -42,6 +42,8 @@ class DispatcherRig:
             bus_addr=self.ad["bus"],
             snapshot_addr=self.ad["snap"],
         )
+        self.disp.setup_sockets()
+
         self.ctx = zmq.Context()
         self.push = self.ctx.socket(zmq.PUSH)
         self.push_prio = self.ctx.socket(zmq.PUSH)
@@ -51,6 +53,7 @@ class DispatcherRig:
         self.push_prio.connect(self.ad["prio"])
         self.sub.connect(self.ad["bus"])
         self.sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        time.sleep(0.2)
 
         self.thread = threading.Thread(target=self.disp.run, daemon=True)
         self.started = False

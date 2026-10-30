@@ -98,6 +98,9 @@ class CommandDispatcher:
 
     def setup_sockets(self) -> None:
         """Initializes and binds ZeroMQ sockets for dual-channel routing and snapshot serving."""
+        if self.pull_sock is not None and not self.pull_sock.closed:
+            return
+
         if self.context is None or self.context.closed:
             self.context = zmq.Context()
             self._stopped = False

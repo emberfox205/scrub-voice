@@ -122,14 +122,17 @@ def _transport_latency(kind: str, payload: int, n: int) -> Dict[str, Any]:
     return {"latency_ms": summarize(lats), "throughput_msgs_per_s": thr}
 
 
-def bench_ipc(args_or_reps: Any = 500, nlu_instance=None) -> Dict[str, Any]:
+def bench_ipc(args_or_reps: Any = 500, nlu_instance=None, reps: Optional[int] = None) -> Dict[str, Any]:
     """Execute the full IPC and Dispatcher benchmark suite."""
-    if hasattr(args_or_reps, "reps_ipc"):
-        reps = args_or_reps.reps_ipc
+    if reps is not None:
+        reps_val = reps
+    elif hasattr(args_or_reps, "reps_ipc"):
+        reps_val = args_or_reps.reps_ipc
     elif isinstance(args_or_reps, int):
-        reps = args_or_reps
+        reps_val = args_or_reps
     else:
-        reps = 500
+        reps_val = 500
+    reps = reps_val
 
     print("\n" + "=" * 72 + "\n [IPC] ZeroMQ transport + dispatcher\n" + "=" * 72)
     try:

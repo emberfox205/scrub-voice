@@ -33,10 +33,55 @@ from src.asr.bench_configs import CONFIGS, PRODUCTION_CONFIG
 from src.asr.vocab import vosk_grammar_phrases
 
 
+def segment_words_into_utterances(words: list, max_pause_sec: float = 0.6) -> list[dict]:
+    """Splits a sequence of recognized words into distinct utterances based on silence pauses."""
+    if not words:
+        return []
+
+    utterances = []
+    current_words = [words[0]]
+
+    for i in range(1, len(words)):
+        prev_end = words[i - 1].end
+        curr_start = words[i].start
+        pause = curr_start - prev_end
+
+        if pause >= max_pause_sec:
+            # Emit completed utterance
+            utt_text = " ".join(w.word for w in current_words)
+            mean_conf = sum(w.confidence for w in current_words) / len(current_words)
+            utterances.append({
+                "text": utt_text,
+                "start": current_words[0].start,
+                "end": current_words[-1].end,
+                "duration": current_words[-1].end - current_words[0].start,
+                "confidence": mean_conf,
+                "words": current_words,
+            })
+            current_words = [words[i]]
+        else:
+            current_words.append(words[i])
+
+    if current_words:
+        utt_text = " ".join(w.word for w in current_words)
+        mean_conf = sum(w.confidence for w in current_words) / len(current_words)
+        utterances.append({
+            "text": utt_text,
+            "start": current_words[0].start,
+            "end": current_words[-1].end,
+            "duration": current_words[-1].end - current_words[0].start,
+            "confidence": mean_conf,
+            "words": current_words,
+        })
+
+    return utterances
+
+
 def inspect_audio_asr(
     audio_paths: List[Path],
     config_name: str = PRODUCTION_CONFIG,
     run_nlu_check: bool = True,
+    pause_threshold: float = 0.6,
 ) -> None:
     """Runs ASR and optional NLU check on provided audio files."""
     print("=" * 70)
@@ -104,30 +149,30 @@ def inspect_audio_asr(
             vocab_ratio = in_vocab_count / len(words)
             print(f"  Grammar Coverage : {in_vocab_count}/{len(words)} words ({vocab_ratio:.1%})")
 
-            # Word breakdown
+        # Split into distinct spoken utterances based on silence pauses
+        segmented_utterances = segment_words_into_utterances(words, max_pause_sec=pause_threshold)
+        print(f"  Detected Commands: {len(segmented_utterances)} utterance(s) separated by pauses (> {pause_threshold:.1f}s)")
+
+        # Evaluate each utterance individually through NLU
+        for u_idx, utt in enumerate(segmented_utterances, 1):
+            print(f"\n  --- [Command #{u_idx}] ({utt['start']:.2f}s - {utt['end']:.2f}s, dur: {utt['duration']:.2f}s, conf: {utt['confidence']:.2%}) ---")
+            print(f"      Transcript : \"{utt['text']}\"")
+
+            if nlu_pipeline:
+                try:
+                    envelope = nlu_pipeline.process(utt["text"])
+                    print(f"      -> Intent  : {envelope.get('intent')} ({envelope.get('category')})")
+                    print(f"      -> Status  : {envelope.get('status')} [Priority: {envelope.get('priority')}]")
+                    print(f"      -> Slots   : {json.dumps(envelope.get('slots'))}")
+                except Exception as e:
+                    print(f"      -> NLU Error: {e}")
+
+        # Full Word-level timestamp breakdown
+        if words:
             print("\n  Word-Level Timestamps:")
             for w in words:
                 marker = "✓" if w.word.lower() in grammar_words else "○"
                 print(f"    [{w.start:5.2f}s - {w.end:5.2f}s] {marker} {w.word:<15} (conf: {w.confidence:.2%})")
-
-        # NLU preview
-        nlu_info = None
-        if nlu_pipeline and transcript:
-            try:
-                envelope = nlu_pipeline.process(transcript)
-                nlu_info = {
-                    "intent": envelope.get("intent"),
-                    "category": envelope.get("category"),
-                    "slots": envelope.get("slots"),
-                    "status": envelope.get("status"),
-                    "priority": envelope.get("priority"),
-                }
-                print("\n  NLU Command Interpretation:")
-                print(f"    -> Intent   : {envelope.get('intent')} ({envelope.get('category')})")
-                print(f"    -> Status   : {envelope.get('status')} [Priority: {envelope.get('priority')}]")
-                print(f"    -> Slots    : {json.dumps(envelope.get('slots'))}")
-            except Exception as e:
-                print(f"    -> NLU Error: {e}")
 
         results.append({
             "file": wav_path.name,
@@ -136,7 +181,7 @@ def inspect_audio_asr(
             "rtf": rtf,
             "transcript": transcript,
             "confidence": confidence,
-            "nlu": nlu_info,
+            "utterances": len(segmented_utterances),
         })
         print("-" * 70)
 
@@ -169,6 +214,12 @@ def main():
         help="ASR configuration to use",
     )
     parser.add_argument(
+        "--pause-threshold",
+        type=float,
+        default=0.6,
+        help="Silence gap threshold (seconds) to split multi-command audio into distinct utterances",
+    )
+    parser.add_argument(
         "--no-nlu",
         dest="run_nlu",
         action="store_false",
@@ -195,7 +246,12 @@ def main():
         print("No audio files found to process.")
         sys.exit(1)
 
-    inspect_audio_asr(files, config_name=args.config, run_nlu_check=args.run_nlu)
+    inspect_audio_asr(
+        files,
+        config_name=args.config,
+        run_nlu_check=args.run_nlu,
+        pause_threshold=args.pause_threshold,
+    )
 
 
 if __name__ == "__main__":

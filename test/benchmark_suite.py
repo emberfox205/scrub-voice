@@ -180,7 +180,7 @@ def parse_args():
     p.add_argument("--live-seconds", type=float, default=10.0)
     p.add_argument("--live-device")
     p.add_argument("--live-channels", type=int, default=8)
-    p.add_argument("--out", default=str(REPO_ROOT / "results"))
+    p.add_argument("--out", "--output-dir", default=str(REPO_ROOT / "results"), help="Output directory")
     p.add_argument("--tag", default="")
     a = p.parse_args()
     a.mic_idx = [int(x) for x in a.mic_channels.split(",")]
