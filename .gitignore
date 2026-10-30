@@ -42,6 +42,8 @@ Thumbs.db
 
 # Generated audio outputs
 data/dsp/output/
+results/
+*dsp_debug*/
 
 # ASR models, benchmark results and recordings
 src/asr/models/
@@ -50,3 +52,6 @@ data/asr/commands_dev/
 data/asr/commands_heldout/
 data/asr/non_command/
 data/asr/noise_only/
+
+# Heavy Binary
+*.safetensors

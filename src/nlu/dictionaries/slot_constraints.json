@@ -1,0 +1,26 @@
+{
+  "zoom_display": {
+    "min_factor": 1.1,
+    "max_factor": 10.0,
+    "default_factor": 2.0,
+    "default_direction": "IN"
+  },
+  "navigate_slice": {
+    "default_step_count": 1,
+    "min_step_count": 1,
+    "min_slice_index": 1
+  },
+  "move_camera": {
+    "min_distance_cm": 1.0,
+    "max_distance_cm": 25.0,
+    "default_distance_cm": 5.0
+  },
+  "tilt_camera": {
+    "min_angle_deg": 1.0,
+    "max_angle_deg": 45.0,
+    "default_angle_deg": 15.0
+  },
+  "fuzzy_matching": {
+    "similarity_threshold": 0.80
+  }
+}

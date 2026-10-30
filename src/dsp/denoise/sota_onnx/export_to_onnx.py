@@ -1,8 +1,20 @@
 import argparse
+from pathlib import Path
+import sys
 import torch
+
+CURRENT_DIR = Path(__file__).resolve().parent
+DENOISE_DIR = CURRENT_DIR.parent
+REPO_ROOT = CURRENT_DIR.parents[3]
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.dsp.denoise.model.DeepFilterNet.DeepFilterNetDNN import DeepFilterNetDNN
 
-def export_model(checkpoint_path, output_path="deepfilternet.onnx"):
+DEFAULT_OUTPUT = DENOISE_DIR / "onnx" / "deepfilternet.onnx"
+
+def export_model(checkpoint_path, output_path=DEFAULT_OUTPUT):
     print(f"Loading checkpoint from: {checkpoint_path}")
     
     # Initialize the model with default parameters matching training
@@ -59,7 +71,7 @@ def export_model(checkpoint_path, output_path="deepfilternet.onnx"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export DeepFilterNet PyTorch model to ONNX")
     parser.add_argument("checkpoint", type=str, help="Path to your .ckpt or .pt file")
-    parser.add_argument("--output", type=str, default="deepfilternet.onnx", help="Output ONNX filename")
+    parser.add_argument("--output", type=str, default=str(DEFAULT_OUTPUT), help="Output ONNX filename")
     
     args = parser.parse_args()
     export_model(args.checkpoint, args.output)

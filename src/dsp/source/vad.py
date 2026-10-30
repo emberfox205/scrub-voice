@@ -12,9 +12,10 @@ class SileroVAD:
         # Load lightweight Silero VAD pre-trained model
         self.model, _ = torch.hub.load(
             repo_or_dir='snakers4/silero-vad',
-            model = 'silero_vad',
+            model='silero_vad',
             force_reload=False,
-            onnx=False
+            onnx=False,
+            trust_repo=True,
         )
         self.model.eval()
 
@@ -35,20 +36,25 @@ class SileroVAD:
         tensor_audio = torch.from_numpy(ref_audio).float()
         num_samples = len(tensor_audio)
 
-        speech_windows = 0
-
+        speech_probs = []
         for start in range(0, num_samples - self.window_size_samples + 1, self.window_size_samples):
             window = tensor_audio[start : start + self.window_size_samples]
             with torch.no_grad():
                 speech_prob = self.model(window, self.sample_rate).item()
+            speech_probs.append(speech_prob)
 
-            if speech_prob >= self.threshold:
-                speech_windows += 1
+        if not speech_probs:
+            return False
 
-        # Clear up memory of RNN after each chunk
-        #self.model.reset_states()
+        # Consider chunk active if at least 3 windows (~96ms) exceed threshold,
+        # or average speech probability across the chunk exceeds threshold.
+        active_windows = sum(1 for p in speech_probs if p >= self.threshold)
+        is_active = (active_windows >= 3) or (float(np.mean(speech_probs)) >= self.threshold)
 
-        # Windown Voting: at least 3 windows having voice
-        return speech_windows >= 3
-     
-        return False
+        if not is_active:
+            try:
+                self.model.reset_states()
+            except Exception:
+                pass
+
+        return is_active

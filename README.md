@@ -33,3 +33,13 @@ A fine-tuned SetFit intent classification model (`setfit_bge-micro-v2_8k`) is in
    ```
 
 Detailed instructions and performance expectations are available in [docs/RPI4_DEPLOYMENT_GUIDE.md](docs/RPI4_DEPLOYMENT_GUIDE.md).
+
+## Subsystem Benchmarks & Edge Evaluations
+
+Comprehensive empirical benchmarks, latency budgets, metric explanations, and teammate recommendations measured on physical Raspberry Pi 4 hardware are documented in the **[`evaluations/`](evaluations/README.md)** directory:
+
+- 🔊 [DSP Evaluation (`evaluations/dsp/`)](evaluations/dsp/README.md): Beamforming, DeepFilterNet RTF (0.449), Silero VAD.
+- 🎙️ [ASR Evaluation (`evaluations/asr/`)](evaluations/asr/README.md): Vosk grammar FST latency (120ms), token posterior confidences.
+- 🧠 [NLU Evaluation (`evaluations/nlu/`)](evaluations/nlu/README.md): SetFit ARM64 thread scaling (152ms), Draft 2020-12 schema validation.
+- ⚡ [Orchestrator Evaluation (`evaluations/orchestrator/`)](evaluations/orchestrator/README.md): ZeroMQ IPC transit (2.68ms), priority preemption.
+- 🔬 [Full Pipeline Evaluation (`evaluations/full-pipe/`)](evaluations/full-pipe/README.md): End-to-end post-speech latency (~293ms), clinical ergonomics.
