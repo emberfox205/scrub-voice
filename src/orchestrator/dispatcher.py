@@ -177,6 +177,8 @@ class CommandDispatcher:
 
         try:
             payload = orjson.loads(raw_msg)
+            if not isinstance(payload, dict):
+                raise ValueError(f"Payload must be a JSON object, got {type(payload).__name__}")
         except Exception as err:
             logger.error("Failed to decode JSON payload: %s", err)
             self._send_error("JSON_DECODE_ERROR", str(err))
