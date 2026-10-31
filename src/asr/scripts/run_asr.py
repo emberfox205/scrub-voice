@@ -47,21 +47,12 @@ CHUNK_S = 0.5
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [ASR] %(message)s")
 logger = logging.getLogger("asr")
 
-DEBUG_LOG_DIR = REPO_ROOT / "results"
-DEBUG_LOG_DIR.mkdir(parents=True, exist_ok=True)
-DEBUG_LOG_FILE = DEBUG_LOG_DIR / "asr_transcripts.jsonl"
-
 
 def log_result(result, seconds: float) -> None:
     words_detail = ", ".join(f"{w.word}:{w.confidence:.2f}" for w in result.words) if result.words else "none"
     logger.info(
         f"{result.text!r} (conf: {result.confidence}, {seconds:.2f}s, end: {result.end_reason}) | Tokens: [{words_detail}]"
     )
-    try:
-        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(result.to_json() + "\n")
-    except Exception:
-        pass
 
 
 def open_push(asr_addr: str):
