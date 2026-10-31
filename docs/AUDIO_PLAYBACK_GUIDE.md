@@ -1,163 +1,206 @@
 # Neural Denoiser ONNX Inference & Audio Playback Guide
 
-This guide covers how to execute your exported neural speech enhancement models (**DuoFilter**, **DeepFilterNet**, and **GTCRN**) in **both Static (Full-File)** and **Real-Time Streaming (Chunk-by-Chunk)** modes, and how to instantly listen to and compare the results directly from your terminal.
+This guide covers how to execute your exported neural speech enhancement models (**Stateful DuoFilter**, **Stateless DuoFilter**, **GTCRN**, and **DeepFilterNet**) across the restructured folders, and how to listen to and compare results directly from your terminal.
 
 ---
 
-## 1. Prerequisites & Environment
+## 1. Directory Organization
 
-Activate your conda environment (`scrub`) and ensure the core files and models are available:
+The denoising subsystem under `src/dsp/denoise/` is organized into three specialized packages:
 
-### Core Files
-* **Inference Scripts:**
-  * `src/dsp/denoise/pi_reference_duofilter.py` (DuoFilter engine - supports both Static and Streaming OLA)
-  * `src/dsp/denoise/gtcrn_denoiser.py` (GTCRN engine)
-  * `src/dsp/denoise/pi_inference.py` (DeepFilterNet engine)
-* **Exported ONNX Models:**
-  * `src/dsp/denoise/onnx/duofilter.onnx`
-  * `src/dsp/denoise/onnx/gtcrn_simple.onnx`
-* **Test Audio:**
-  * `data/asr/test_clip_event.wav` (or `src/dsp/denoise/audio/noise_audio.wav`)
+```
+src/dsp/denoise/
+├── stateful_onnx/                       # True stateful recurrent streaming (0.5s chunks, O(1) memory)
+│   ├── DuoFilterStreaming.py            # PyTorch streaming wrapper with state caches
+│   ├── StatefulCausalDepthwiseConv2d.py # Stateful depthwise convolution module
+│   ├── export_duofilter_streaming_onnx.py # Exporter to duofilter_stateful.onnx
+│   └── duofilter_streaming_denoiser.py  # Runtime inference engine for 0.5s chunks
+├── stateless_onnx/                      # Offline sequence / stateless chunking
+│   ├── export_duofilter_onnx.py         # Exporter to duofilter.onnx
+│   └── stateless_duofilter_denoiser.py  # Static and stateless OLA engine
+├── sota_onnx/                           # SOTA reference comparison engines
+│   ├── gtcrn_denoiser.py                # GTCRN ONNX streaming engine
+│   ├── deepfilternet_denoiser.py        # DeepFilterNet ONNX engine
+│   └── export_to_onnx.py                # DeepFilterNet export script
+├── onnx/                                # Compiled ONNX model binaries
+│   ├── duofilter_stateful.onnx          # Stateful chunk DuoFilter (~628 KB)
+│   ├── duofilter.onnx                   # Stateless sequence DuoFilter (~628 KB)
+│   ├── gtcrn_simple.onnx                # GTCRN model (~523 KB)
+│   └── deepfilternet.onnx               # DeepFilterNet model (~8.9 MB)
+└── checkpoint/                          # PyTorch training checkpoints
+    └── duofilter_best_model.ckpt
+```
 
 ---
 
-## 2. Mode 1: Static Audio Processing (Offline / Full File)
+## 2. Mode 1: Stateful DuoFilter Streaming (Recommended for Edge & Live DSP)
 
-**Use Case:** Offline batch processing, benchmark evaluation, or processing complete pre-recorded audio files. The entire waveform is analyzed and synthesized with continuous STFT -> ONNX -> iSTFT, completely eliminating chunk boundary artifacts and window tapering dips.
+**Use Case:** Real-time microphone streaming, Raspberry Pi 4 edge deployment, and integration with `run_dsp.py`. Operates on **0.5s chunks (32 STFT frames = 8,000 samples @ 16 kHz)**.
 
-### CLI Execution
+* **Zero Boundary Artifacts:** Preserves continuous state caches (`enc0_cache` through `enc3_cache`, `glu_cache`, and `gru_state`) across consecutive chunk calls.
+* **Preserved Dynamic Contrast:** Normalizing across $T=32$ frames allows `GroupNorm` to retain the energy contrast of speech over silence, preventing over-suppression.
+* **No Lookback Hack Needed:** Temporal context is retained in the state tensors without duplicate audio processing.
 
-To run in static mode, simply omit the `--stream` argument (or leave default):
-
+### A. Export the Stateful ONNX Model
 ```bash
-# Run DuoFilter on a static audio file
-python src/dsp/denoise/pi_reference_duofilter.py \
-    --input data/asr/test_clip_event.wav \
+python src/dsp/denoise/stateful_onnx/export_duofilter_streaming_onnx.py \
+    --checkpoint src/dsp/denoise/checkpoint/duofilter_best_model.ckpt \
+    --output src/dsp/denoise/onnx/duofilter_stateful.onnx \
+    --chunk-frames 32
+```
+
+### B. Run Stateful Chunk Inference CLI
+```bash
+python src/dsp/denoise/stateful_onnx/duofilter_streaming_denoiser.py \
+    --input data/asr/sample_02.wav \
+    --output src/dsp/denoise/audio/clean_duofilter_chunk_05s.wav
+```
+
+### C. Python API Integration (Used in `run_dsp.py`)
+```python
+from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
+
+# 1. Initialize once:
+denoiser = DuoFilterStreamingDenoiser(
+    model_path="src/dsp/denoise/onnx/duofilter_stateful.onnx",
+    chunk_samples=8000,
+    threads=1,
+)
+
+# 2. In live streaming loop:
+# mono_audio is a 1D float32 numpy array of 8,000 samples (0.5s) from beamformer
+clean_chunk = denoiser.enhance_chunk(mono_audio)
+```
+
+---
+
+## 3. Mode 2: Stateless DuoFilter Processing (Static & Legacy OLA)
+
+**Use Case:** Offline batch evaluation, full-file processing, or testing magnitude-only phase preservation.
+
+### A. Export the Stateless ONNX Model
+```bash
+python src/dsp/denoise/stateless_onnx/export_duofilter_onnx.py
+```
+
+### B. Full-File Static Processing
+```bash
+# Continuous full-file static pass (default):
+python src/dsp/denoise/stateless_onnx/stateless_duofilter_denoiser.py \
+    --input data/asr/sample_02.wav \
     --output src/dsp/denoise/audio/clean_static.wav \
     --threads 1
 
-# Optional: Enable Phase Preservation (Magnitude-only masking) for heavy room reverb:
-python src/dsp/denoise/pi_reference_duofilter.py \
-    --input data/asr/test_clip_event.wav \
+# Optional: Phase preservation for high-reverberation rooms:
+python src/dsp/denoise/stateless_onnx/stateless_duofilter_denoiser.py \
+    --input data/asr/sample_02.wav \
     --output src/dsp/denoise/audio/clean_static_phase_pres.wav \
     --phase-preservation
 ```
 
-### Python API Example (Static Mode)
-
-```python
-import soundfile as sf
-from src.dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
-
-# 1. Initialize engine
-denoiser = DuoFilterDenoiser(threads=1)
-
-# 2. Load complete audio
-audio, sr = sf.read("data/asr/test_clip_event.wav", dtype="float32")
-
-# 3. Enhance in a single continuous pass (streaming=False)
-clean_audio = denoiser.enhance(audio, sample_rate=sr, streaming=False)
-
-# 4. Save enhanced audio
-sf.write("src/dsp/denoise/audio/clean_static.wav", clean_audio, 16000)
-print("Static processing completed successfully!")
-```
-
----
-
-## 3. Mode 2: Real-Time Streaming Audio Processing (Chunk-by-Chunk)
-
-**Use Case:** Simulating live microphone streaming, Raspberry Pi edge deployment, or real-time DSP pipelines where audio arrives incrementally in chunks (e.g., 500 ms = 8,000 samples).
-
-The streaming mode uses an internal **FIFO input buffer** and **Overlap-Add (OLA) synthesis buffer** to preserve the Constant Overlap-Add (COLA) condition across consecutive chunk boundaries without clicks, dips, or comb filtering.
-
-### CLI Execution (Just add `--stream`)
-
-To run in streaming mode, simply pass the `--stream` flag!
-
+### C. Stateless Chunk Streaming (with OLA)
 ```bash
-# Process in real-time streaming mode (500 ms chunks with OLA)
-python src/dsp/denoise/pi_reference_duofilter.py \
-    --input data/asr/test_clip_event.wav \
-    --output src/dsp/denoise/audio/clean_stream.wav \
-    --stream
-
-# Optional: Customize the chunk size (e.g. 4000 samples = 250 ms)
-python src/dsp/denoise/pi_reference_duofilter.py \
-    --input data/asr/test_clip_event.wav \
-    --output src/dsp/denoise/audio/clean_stream_250ms.wav \
+python src/dsp/denoise/stateless_onnx/stateless_duofilter_denoiser.py \
+    --input data/asr/sample_02.wav \
+    --output src/dsp/denoise/audio/clean_stream_stateless.wav \
     --stream \
-    --chunk-size 4000
+    --chunk-size 8000
 ```
 
-### Live Pipeline Integration (`run_dsp.py`)
+---
 
-To run the denoiser as part of the complete scrub-voice live DSP service (Localizer + Beamformer + VAD + Denoiser):
+## 4. Mode 3: SOTA Reference Denoisers
+
+### A. GTCRN Speech Enhancement
+```bash
+python src/dsp/denoise/sota_onnx/gtcrn_denoiser.py \
+    --input data/asr/sample_02.wav \
+    --output src/dsp/denoise/audio/clean_gtcrn_sample_2.wav
+```
+
+### B. DeepFilterNet Speech Enhancement
+```bash
+# Export DeepFilterNet:
+python src/dsp/denoise/sota_onnx/export_to_onnx.py \
+    src/dsp/denoise/checkpoint/best_model.ckpt \
+    --output src/dsp/denoise/onnx/deepfilternet.onnx
+
+# Run DeepFilterNet inference:
+python src/dsp/denoise/sota_onnx/deepfilternet_denoiser.py
+```
+
+---
+
+## 5. Live Pipeline Integration (`src/dsp/run_dsp.py`)
+
+`run_dsp.py` connects Silero VAD, SRP-PHAT Localizer, DAS Beamformer, and any selected denoiser to stream 0.5s cleaned speech chunks to ASR via ZeroMQ IPC.
 
 ```bash
-python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser duofilter
+# 1. Stateful DuoFilter (0.5s chunk streaming, default):
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type duofilter
+
+# 2. GTCRN denoiser:
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type gtcrn
+
+# 3. Stateless DuoFilter:
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type duofilter_stateless
+
+# 4. DeepFilterNet:
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type deepfilter
+
+# 5. Live hardware mic array (Seeed 8-mic):
+python src/dsp/run_dsp.py --device "plughw:seeed8micvoicec,0" --denoiser-type duofilter
 ```
 
-### Real-Time Performance Benchmarks (Single CPU Thread)
+---
 
-| Audio Chunk Size | Budget Time | Processing Time | Headroom Margin | Real-Time Factor (RTF) |
+## 6. Real-Time Performance Benchmarks (Single CPU Thread)
+
+Measured on 16 kHz audio (sample_02.wav) using a single CPU core:
+
+| Model & Mode | Script Path | Chunk Size | Real-Time Factor (RTF) | Speedup vs Real-Time |
 | :--- | :--- | :--- | :--- | :--- |
-| **500 ms (8,000 samples)** | 500.0 ms | **~21.6 ms** | **~478.4 ms (95.7% idle)** | **0.043 (23x faster than real-time)** |
-| **250 ms (4,000 samples)** | 250.0 ms | **~11.2 ms** | **~238.8 ms (95.5% idle)** | **0.045 (22x faster than real-time)** |
+| **Stateful DuoFilter** | `stateful_onnx/duofilter_streaming_denoiser.py` | **0.5 s (8,000 samples)** | **0.0380** | **~26x faster** |
+| **Stateless DuoFilter** | `stateless_onnx/stateless_duofilter_denoiser.py` | Full-file (static) | **0.0270** | **~37x faster** |
+| **GTCRN Simple** | `sota_onnx/gtcrn_denoiser.py` | Frame-by-frame (16 ms) | **0.0316** | **~31x faster** |
 
 ---
 
-## 4. Listening & A/B Comparison (Command Line)
+## 7. Listening & A/B Comparison (Terminal Playback)
 
-You can listen to audio files directly from the command line without opening a desktop GUI.
-
-### On macOS (Apple Silicon / Intel)
-macOS comes with the built-in `afplay` (Audio File Play) utility:
-
-**1. Listen to raw noisy input:**
+### On macOS (`afplay`)
 ```bash
-afplay data/asr/test_clip_event.wav
+# 1. Listen to raw noisy input:
+afplay data/asr/sample_02.wav
+
+# 2. Listen to Stateful 0.5s Chunk Clean Output:
+afplay src/dsp/denoise/audio/clean_duofilter_chunk_05s.wav
+
+# 3. Listen to GTCRN Clean Output:
+afplay src/dsp/denoise/audio/clean_gtcrn_sample_2.wav
+
+# 4. Quick A/B Comparison:
+afplay data/asr/sample_02.wav && afplay src/dsp/denoise/audio/clean_duofilter_chunk_05s.wav
 ```
+*(Press `Ctrl + C` anytime to halt playback).*
 
-**2. Listen to Static (Full-File) Clean Output:**
+### On Linux / Raspberry Pi (`aplay`)
 ```bash
-afplay src/dsp/denoise/audio/clean_static.wav
-```
-
-**3. Listen to Streamed (Chunk-by-Chunk) Clean Output:**
-```bash
-afplay src/dsp/denoise/audio/clean_stream.wav
-```
-
-**4. A/B Toggle Comparison:**
-Run them sequentially to immediately hear the background noise drop from SNR ~26 dB to ~52 dB:
-```bash
-afplay data/asr/test_clip_event.wav && afplay src/dsp/denoise/audio/clean_stream.wav
-```
-*(Tip: Press `Ctrl + C` anytime to stop playback).*
-
----
-
-### On Linux (Raspberry Pi / Edge Device)
-Linux uses ALSA's `aplay`:
-
-```bash
-# Play clean static output
-aplay src/dsp/denoise/audio/clean_static.wav
-
-# Play clean streamed output
-aplay src/dsp/denoise/audio/clean_stream.wav
-
-# Explicit sample format if playing raw PCM:
-aplay -D default -r 16000 -f S16_LE src/dsp/denoise/audio/clean_stream.wav
+aplay -D default -r 16000 -f S16_LE src/dsp/denoise/audio/clean_duofilter_chunk_05s.wav
 ```
 
 ---
 
-## 5. Troubleshooting & Tips
+## 8. Summary of Renamed Files
 
-* **Comb Filtering / Hollow Sound:**
-  * If processing multi-channel microphone array audio, always specify `--channel 0` to select the reference microphone. Never average multi-mic audio with `.mean(axis=1)` prior to delay-alignment beamforming, as spatial delays cause acoustic comb filtering.
-  * For rooms with severe wall reflections, use `--phase-preservation` to retain the pristine input phase.
-* **Buffer Continuity:**
-  * When using streaming in custom loops, always call `denoiser.reset_states()` before starting a new speech utterance to clear the internal FIFO and OLA buffers.
+| Old Location | New Location |
+| :--- | :--- |
+| `src/dsp/denoise/gtcrn_denoiser.py` | `src/dsp/denoise/sota_onnx/gtcrn_denoiser.py` |
+| `src/dsp/denoise/pi_inference.py` | `src/dsp/denoise/sota_onnx/deepfilternet_denoiser.py` |
+| `src/dsp/denoise/export_to_onnx.py` | `src/dsp/denoise/sota_onnx/export_to_onnx.py` |
+| `src/dsp/denoise/pi_reference_duofilter.py` | `src/dsp/denoise/stateless_onnx/stateless_duofilter_denoiser.py` |
+| `src/dsp/denoise/export_duofilter_onnx.py` | `src/dsp/denoise/stateless_onnx/export_duofilter_onnx.py` |
+| *(New)* | `src/dsp/denoise/stateful_onnx/duofilter_streaming_denoiser.py` |
+| *(New)* | `src/dsp/denoise/stateful_onnx/export_duofilter_streaming_onnx.py` |
+| *(New)* | `src/dsp/denoise/stateful_onnx/DuoFilterStreaming.py` |
+| *(New)* | `src/dsp/denoise/stateful_onnx/StatefulCausalDepthwiseConv2d.py` |

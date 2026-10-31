@@ -2,8 +2,8 @@ import torch
 import sys
 from pathlib import Path
 
-# Automatically resolve the project root (3 folders up: denoise -> dsp -> src -> scrub-voice)
-project_root = Path(__file__).resolve().parents[3]
+# Automatically resolve the project root (4 folders up: stateless_onnx -> denoise -> dsp -> src -> scrub-voice)
+project_root = Path(__file__).resolve().parents[4]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 

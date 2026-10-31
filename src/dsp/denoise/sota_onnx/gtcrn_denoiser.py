@@ -11,9 +11,10 @@ import torch
 import torchaudio
 
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parents[2]
-DEFAULT_MODEL_PATH = CURRENT_DIR / "onnx" / "gtcrn_simple.onnx"
-FALLBACK_MODEL_PATH = CURRENT_DIR / "onnx" / "gtcrn_simple.onnx"
+DENOISE_DIR = CURRENT_DIR.parent
+REPO_ROOT = CURRENT_DIR.parents[3]
+DEFAULT_MODEL_PATH = DENOISE_DIR / "onnx" / "gtcrn_simple.onnx"
+FALLBACK_MODEL_PATH = DENOISE_DIR / "onnx" / "gtcrn_simple.onnx"
 
 
 class GTCRNDenoiser:
@@ -208,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=str,
-        default=str(CURRENT_DIR / "audio" / "clean_gtcrn_sample_2.wav"),
+        default=str(DENOISE_DIR / "audio" / "clean_gtcrn_sample_2.wav"),
         help="Output enhanced wav file path",
     )
     args = parser.parse_args()
