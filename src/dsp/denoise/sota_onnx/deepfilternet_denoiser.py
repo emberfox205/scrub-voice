@@ -45,12 +45,21 @@ def make_erb_filterbank(sample_rate, n_fft, erb_bins, low_freq=0.0, high_freq=No
 def erb_synthesis_matrix(filterbank: Tensor, eps: float = 1e-8) -> Tensor:
     return filterbank.T / filterbank.sum(dim=0, keepdim=True).T.clamp_min(eps)
 
-def apply_erb_gains(input_spec: Tensor, gains: Tensor, synthesis_matrix: Tensor) -> Tensor:
+def apply_erb_gains(
+    input_spec: Tensor,
+    gains: Tensor,
+    synthesis_matrix: Tensor,
+    atten_lim_db: float | None = 20.0,
+) -> Tensor:
     if gains.ndim != 4 or gains.shape[1] != 1:
         raise ValueError("gains must have shape [B, 1, T, E]")
-        
-    frequency_gain = gains[:, 0] @ synthesis_matrix.T    # -> [B, T, F]
-    
+
+    if atten_lim_db is not None and atten_lim_db < 100.0:
+        min_gain = 10.0 ** (-atten_lim_db / 20.0)
+        gains = torch.clamp(gains, min=min_gain)
+
+    frequency_gain = gains[:, 0] @ synthesis_matrix.T  # -> [B, T, F]
+
     return input_spec.transpose(1, 2) * frequency_gain.to(input_spec.dtype)
 
 def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, df_bins: int = 96, df_order: int = 5, lookahead: int = 0) -> Tensor:
@@ -116,6 +125,7 @@ class DeepFilterDenoiser:
         erb_bins: int = 32,
         df_bins: int = 96,
         threads: int = 1,
+        atten_lim_db: float | None = 20.0,
     ):
         if model_path is None:
             onnx_sub = CURRENT_DIR / "onnx" / "deepfilternet.onnx"
@@ -127,6 +137,7 @@ class DeepFilterDenoiser:
         self.win_length = win_length
         self.erb_bins = erb_bins
         self.df_bins = df_bins
+        self.atten_lim_db = atten_lim_db
 
         torch.set_num_threads(threads)
         options = ort.SessionOptions()
@@ -174,7 +185,9 @@ class DeepFilterDenoiser:
         df_coefficients = torch.from_numpy(outputs[1])
         alpha = torch.from_numpy(outputs[2])
 
-        stage1_spec = apply_erb_gains(input_spec, erb_gains, self.synthesis_matrix)
+        stage1_spec = apply_erb_gains(
+            input_spec, erb_gains, self.synthesis_matrix, atten_lim_db=self.atten_lim_db
+        )
         final_spec = apply_deep_filter(
             stage1_spec=stage1_spec,
             coefficients=df_coefficients,

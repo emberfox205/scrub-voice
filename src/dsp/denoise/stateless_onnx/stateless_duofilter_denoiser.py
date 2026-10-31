@@ -105,6 +105,7 @@ class DuoFilterDenoiser:
         win_length: int = 512,
         threads: int = 2,
         lookback_samples: int = 2048,
+        atten_lim_db: Optional[float] = 20.0,
     ):
         if model_path is None:
             model_path = self.DEFAULT_ONNX_PATH
@@ -114,6 +115,7 @@ class DuoFilterDenoiser:
         self.hop_length = hop_length
         self.win_length = win_length
         self.lookback_samples = lookback_samples
+        self.atten_lim_db = atten_lim_db
 
         if not self.model_path.exists():
             raise FileNotFoundError(f"DuoFilter ONNX model not found at {self.model_path}")
@@ -234,6 +236,17 @@ class DuoFilterDenoiser:
 
         if T < TARGET_FRAMES:
             enhanced_stft = enhanced_stft[:, :, :T, :]
+
+        # Minimum Gain Floor Clamping: clamp over-suppressed bins to authentic input floor
+        if self.atten_lim_db is not None and self.atten_lim_db < 100.0:
+            min_gain = 10.0 ** (-self.atten_lim_db / 20.0)
+            noisy_mag = torch.sqrt(noisy_stft[:, 0] ** 2 + noisy_stft[:, 1] ** 2 + 1e-12)
+            enh_mag = torch.sqrt(enhanced_stft[:, 0] ** 2 + enhanced_stft[:, 1] ** 2 + 1e-12)
+            floor_mag = min_gain * noisy_mag
+
+            below_floor = (enh_mag < floor_mag).unsqueeze(1)
+            floor_stft = min_gain * noisy_stft
+            enhanced_stft = torch.where(below_floor, floor_stft, enhanced_stft)
 
         # Optional Phase Preservation: Use magnitude from model + original noisy phase
         if phase_preservation:

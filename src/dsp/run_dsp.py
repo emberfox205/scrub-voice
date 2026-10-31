@@ -83,6 +83,7 @@ def run_dsp_service(
     realtime: bool = True,
     loop: bool = False,
     dump_dir: Optional[Path] = None,
+    atten_lim_db: Optional[float] = 20.0,
 ) -> None:
     """Run the DSP streaming loop."""
     logger.info("Initializing DSP subsystems...")
@@ -107,16 +108,16 @@ def run_dsp_service(
         dtype = denoiser_type.lower()
         if dtype in ["duofilter", "duofilter_stateful"]:
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter_stateful.onnx"
-            denoiser = DuoFilterStreamingDenoiser(model_path=denoiser_model, threads=1)
+            denoiser = DuoFilterStreamingDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
             # Warmup denoiser
             _ = denoiser.enhance_chunk(dummy_multichannel[0])
-            logger.info("Stateful DuoFilter ONNX denoiser initialized (0.5s chunk streaming).")
+            logger.info(f"Stateful DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB).")
         elif dtype == "duofilter_stateless":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
-            denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1)
+            denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info("Stateless DuoFilter ONNX denoiser initialized.")
+            logger.info(f"Stateless DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB).")
         elif dtype == "gtcrn":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "gtcrn_simple.onnx"
             denoiser = GTCRNDenoiser(model_path=denoiser_model, threads=1)
@@ -127,10 +128,10 @@ def run_dsp_service(
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "deepfilternet.onnx"
             if not denoiser_model.exists():
                 denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
-            denoiser = DeepFilterDenoiser(model_path=denoiser_model, threads=1)
+            denoiser = DeepFilterDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info("DeepFilterNet ONNX denoiser initialized.")
+            logger.info(f"DeepFilterNet ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB).")
         else:
             raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'duofilter_stateless', 'gtcrn', 'deepfilter'")
 
@@ -309,6 +310,12 @@ def main() -> None:
     parser.add_argument("--fast", dest="realtime", action="store_false", help="Simulate faster than real time")
     parser.add_argument("--loop", action="store_true", help="Loop WAV file continuously")
     parser.add_argument("--dump-audio", type=Path, default=None, help="Directory to save cleaned audio utterances and full session")
+    parser.add_argument(
+        "--atten-lim-db",
+        type=float,
+        default=20.0,
+        help="Attenuation limit in dB (default: 20.0 to preserve natural acoustic floor for ASR, or >= 100 for full suppression)",
+    )
     parser.set_defaults(denoise=True, spatial=True, realtime=True)
 
     args = parser.parse_args()
@@ -323,6 +330,7 @@ def main() -> None:
         realtime=args.realtime,
         loop=args.loop,
         dump_dir=args.dump_audio,
+        atten_lim_db=args.atten_lim_db,
     )
 
 
