@@ -216,6 +216,7 @@ class Supervisor:
                     bufsize=1,
                     env=env,
                     cwd=str(REPO_ROOT),
+                    start_new_session=True,  # Isolate from terminal signals so supervisor coordinates graceful shutdown
                 )
                 spec.process = proc
                 self._log("SUPERVISOR", f"Spawned service {BOLD}{spec.name}{RESET} (PID {proc.pid})")
@@ -233,7 +234,7 @@ class Supervisor:
                 self._log("SUPERVISOR", f"Failed to spawn service {spec.name}: {e}", level="ERROR")
                 return False
 
-    def stop_service(self, spec: ServiceSpec, timeout: float = 2.0) -> None:
+    def stop_service(self, spec: ServiceSpec, timeout: float = 3.0) -> None:
         """Stops an individual service with SIGINT, falling back to SIGKILL."""
         proc = spec.process
         if proc is None or proc.poll() is not None:
@@ -361,7 +362,8 @@ class Supervisor:
                     spec = self.services[name]
                     if spec.process and spec.process.poll() is None:
                         self._log("SUPERVISOR", f"Stopping service {name} (PID {spec.process.pid})...")
-                        self.stop_service(spec, timeout=1.5)
+                        t_wait = 4.0 if name == "DSP" else 2.0
+                        self.stop_service(spec, timeout=t_wait)
 
             # Cleanup IPC sockets in /tmp
             for sock in Path("/tmp").glob("scrub_*.ipc"):

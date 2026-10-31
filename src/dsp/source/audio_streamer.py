@@ -95,6 +95,7 @@ class AudioStreamer:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,        # Isolate from terminal signals so stop() handles clean ALSA release
         )
 
     def stop(self) -> None:
@@ -103,27 +104,29 @@ class AudioStreamer:
         self._wav_pos = 0
         if self._process is not None:
             try:
-                # 1. Close stdout pipe first so arecord knows nothing is listening
+                # 1. Send SIGINT first so arecord cleanly calls snd_pcm_close() and frees DMA descriptors.
+                # NEVER close stdout first, which triggers SIGPIPE and bypasses ALSA driver cleanup!
+                import signal
+                try:
+                    self._process.send_signal(signal.SIGINT)
+                    self._process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    # Give it a second chance with SIGTERM before force-killing
+                    try:
+                        self._process.terminate()
+                        self._process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        self._process.kill()
+                        self._process.wait(timeout=0.5)
+            except Exception:
+                pass
+            finally:
+                # 2. Only close stdout AFTER arecord has completely exited
                 if self._process.stdout is not None:
                     try:
                         self._process.stdout.close()
                     except Exception:
                         pass
-
-                # 2. Send SIGINT (Ctrl+C signal) instead of SIGTERM.
-                # arecord handles SIGINT natively by closing the ALSA PCM device cleanly!
-                import signal
-                self._process.send_signal(signal.SIGINT)
-
-                # 3. Wait briefly, then force-kill if driver refuses to yield
-                try:
-                    self._process.wait(timeout=0.5)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait(timeout=0.5)
-            except Exception as e:
-                pass
-            finally:
                 self._process = None
 
     # ============
