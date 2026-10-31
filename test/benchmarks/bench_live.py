@@ -29,7 +29,7 @@ import numpy as np
 from test.benchmarks.bench_e2e import make_variants
 from test.benchmarks.common.acoustics import circular_array, save_audio
 from test.benchmarks.common.registry import BUDGETS, Registry, RepoNLU, _try_import
-from test.benchmarks.common.reporting import _jd
+from test.benchmarks.common.reporting import _jd, save_json_report
 from test.benchmarks.common.rig import DispatcherRig
 from test.benchmarks.common.stats import summarize
 from test.benchmarks.common.telemetry import ResourceSampler, hw_info
@@ -50,15 +50,32 @@ def bench_live(args, reg: Registry, nlu, rig, mic_xy: np.ndarray, outdir: Path) 
 
     var = variants[0]
     bf, dn, asr = reg.get("bf", var.bf), reg.get("dn", var.dn), reg.get("asr", var.asr)
-    sr, blk = args.sr, int(args.chunk_s * args.sr)
+    sr = args.sr
+    target_chunk = int(args.chunk_s * args.sr)
+    # Use aligned 1024-frame power-of-two hardware blocks for ALSA driver stability
+    hw_block = 1024 if (target_chunk >= 1024 and target_chunk % 1024 != 0) else min(1024, target_chunk)
     n_chunks = int(math.ceil(args.live_seconds / args.chunk_s))
     q: queue.Queue = queue.Queue()
     overflow = [0]
+    accum_chunks: list[np.ndarray] = []
+    accum_count = 0
+    t_chunk_start = pc()
 
     def callback(indata, frames, time_info, status):
+        nonlocal accum_chunks, accum_count, t_chunk_start
         if status.input_overflow:
             overflow[0] += 1
-        q.put((pc(), indata.copy()))
+        if not accum_chunks:
+            t_chunk_start = pc()
+        accum_chunks.append(indata.copy())
+        accum_count += frames
+        if accum_count >= target_chunk:
+            full = np.concatenate(accum_chunks, axis=0)
+            chunk = full[:target_chunk]
+            remainder = full[target_chunk:]
+            accum_chunks = [remainder] if len(remainder) > 0 else []
+            accum_count = len(remainder)
+            q.put((t_chunk_start, chunk))
 
     asr.reset()
     raw, lat, backlog, rtf = [], [], [], []
@@ -69,7 +86,7 @@ def bench_live(args, reg: Registry, nlu, rig, mic_xy: np.ndarray, outdir: Path) 
         with sd.InputStream(
             samplerate=sr,
             channels=args.live_channels,
-            blocksize=blk,
+            blocksize=hw_block,
             dtype="float32",
             device=args.live_device,
             callback=callback,
@@ -197,8 +214,7 @@ def main():
         "hardware": hw_info(),
         "live": res,
     }
-    with open(outdir / "report_live.json", "w") as f:
-        json.dump(report, f, indent=2, default=_jd)
+    save_json_report(report, outdir / "report_live.json")
     print(f"\n Results saved to: {outdir / 'report_live.json'}")
 
 

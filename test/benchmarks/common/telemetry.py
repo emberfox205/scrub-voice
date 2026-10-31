@@ -72,10 +72,26 @@ def hw_info() -> Dict[str, Any]:
     except Exception:
         info["git_commit"] = None
     versions = {}
-    for m in ("numpy", "scipy", "torch", "onnxruntime", "vosk", "faster_whisper", "zmq", "sounddevice", "noisereduce", "df"):
-        mod = _try_import(m)
-        if mod is not None:
-            versions[m] = getattr(mod, "__version__", "?")
+    try:
+        from importlib import metadata as importlib_metadata
+    except ImportError:
+        importlib_metadata = None
+
+    for m in ("numpy", "scipy", "torch", "onnxruntime", "vosk", "faster-whisper", "pyzmq", "sounddevice", "noisereduce", "deepfilternet"):
+        v = None
+        if importlib_metadata is not None:
+            try:
+                v = importlib_metadata.version(m)
+            except Exception:
+                pass
+        if v is None:
+            # Fallback to sys.modules if already imported, avoiding any new hardware-probing imports
+            import sys
+            mod = sys.modules.get(m)
+            if mod is not None:
+                v = getattr(mod, "__version__", None)
+        if v is not None:
+            versions[m] = str(v)
     info["versions"] = versions
     return info
 

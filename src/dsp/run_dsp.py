@@ -47,6 +47,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [DSP
 logger = logging.getLogger("dsp")
 
 
+def save_wav_ram_first(path: Path, data: np.ndarray, sample_rate: int) -> Path:
+    """Saves audio array to 16-bit PCM WAV: writes to /dev/shm (RAM) first, then auto-saves to path."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clipped = np.clip(data, -1.0, 1.0).astype(np.float32)
+
+    ram_base = Path("/dev/shm")
+    is_ram_available = ram_base.is_dir() and os.access(str(ram_base), os.W_OK)
+
+    try:
+        resolved = path.resolve()
+        if not is_ram_available or ram_base in resolved.parents or resolved == ram_base:
+            sf.write(str(path), clipped, sample_rate, subtype="PCM_16")
+            return path
+    except Exception:
+        pass
+
+    import shutil
+    import uuid
+
+    stage_dir = ram_base / "scrub_stage"
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_file = stage_dir / f"tmp_{uuid.uuid4().hex[:8]}_{path.name}"
+    except Exception:
+        sf.write(str(path), clipped, sample_rate, subtype="PCM_16")
+        return path
+
+    try:
+        sf.write(str(stage_file), clipped, sample_rate, subtype="PCM_16")
+        shutil.copy2(str(stage_file), str(path))
+    finally:
+        if stage_file.exists():
+            try:
+                stage_file.unlink()
+            except Exception:
+                pass
+    return path
+
+
 def connect_push_socket(addr: str, max_retries: int = 10, retry_delay: float = 0.5) -> tuple[zmq.Context, zmq.Socket]:
     """Connect PUSH socket to ASR with retry for IPC endpoint existence."""
     context = zmq.Context.instance()
@@ -159,9 +199,9 @@ def run_dsp_service(
         beam_path = dump_dir / f"utterance_{utterance_count:03d}_2_beamformed.wav"
         clean_path = dump_dir / f"utterance_{utterance_count:03d}_3_denoised.wav"
 
-        sf.write(str(raw_path), raw_m1, SAMPLE_RATE)
-        sf.write(str(beam_path), beam_m, SAMPLE_RATE)
-        sf.write(str(clean_path), clean_m, SAMPLE_RATE)
+        save_wav_ram_first(raw_path, raw_m1, SAMPLE_RATE)
+        save_wav_ram_first(beam_path, beam_m, SAMPLE_RATE)
+        save_wav_ram_first(clean_path, clean_m, SAMPLE_RATE)
 
         rms_raw = float(np.sqrt(np.mean(raw_m1**2)))
         rms_beam = float(np.sqrt(np.mean(beam_m**2)))
@@ -259,9 +299,9 @@ def run_dsp_service(
                 raw_session = dump_dir / "session_1_raw_mic1.wav"
                 beam_session = dump_dir / "session_2_beamformed.wav"
                 clean_session = dump_dir / "session_3_denoised.wav"
-                sf.write(str(raw_session), np.concatenate(all_raw_mic1), SAMPLE_RATE)
-                sf.write(str(beam_session), np.concatenate(all_beamformed), SAMPLE_RATE)
-                sf.write(str(clean_session), np.concatenate(all_denoised), SAMPLE_RATE)
+                save_wav_ram_first(raw_session, np.concatenate(all_raw_mic1), SAMPLE_RATE)
+                save_wav_ram_first(beam_session, np.concatenate(all_beamformed), SAMPLE_RATE)
+                save_wav_ram_first(clean_session, np.concatenate(all_denoised), SAMPLE_RATE)
                 logger.info(f"Saved full session 3 stages: {raw_session.name}, {beam_session.name}, {clean_session.name}")
         if in_speech:
             try:

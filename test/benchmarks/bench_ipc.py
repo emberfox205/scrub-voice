@@ -27,7 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from test.benchmarks.common.registry import BUDGETS
-from test.benchmarks.common.reporting import _jd
+from test.benchmarks.common.reporting import _jd, save_json_report
 from test.benchmarks.common.rig import DispatcherRig, endpoint
 from test.benchmarks.common.stats import summarize
 from test.benchmarks.common.telemetry import ResourceSampler, get_rss_mb, hw_info
@@ -336,8 +336,7 @@ def main():
             "hardware": hw_info(),
             "ipc": results,
         }
-        with open(outdir / "report_ipc.json", "w") as f:
-            json.dump(report, f, indent=2, default=_jd)
+        save_json_report(report, outdir / "report_ipc.json")
         print(f"\n Results saved to: {outdir / 'report_ipc.json'}")
 
 

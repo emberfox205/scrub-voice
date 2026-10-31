@@ -93,6 +93,7 @@ from test.benchmarks.common.reporting import (
     make_figures,
     md_table,
     print_budget_table,
+    save_json_report,
     tex_table,
     write_csvs,
     write_tables,
@@ -328,8 +329,7 @@ def main():
     report["skipped_components"] = reg.skipped
     report["resources"] = {"peak_rss_mb": peak_rss}
 
-    with open(outdir / "report.json", "w") as f:
-        json.dump(report, f, indent=1, default=_jd)
+    save_json_report(report, outdir / "report.json")
 
     write_csvs(report, outdir)
     write_tables(report, outdir)

@@ -39,7 +39,7 @@ from test.benchmarks.common.acoustics import (
     snr_label,
 )
 from test.benchmarks.common.registry import BUDGETS, Registry, RepoNLU
-from test.benchmarks.common.reporting import _jd, make_figures, md_table, tex_table, write_csvs, write_tables
+from test.benchmarks.common.reporting import _jd, make_figures, md_table, save_json_report, tex_table, write_csvs, write_tables
 from test.benchmarks.common.rig import DispatcherRig
 from test.benchmarks.common.stats import corpus_wer, holm, intent_metrics, norm_text, paired_test, slots_match, summarize, word_errors
 from test.benchmarks.common.telemetry import ResourceSampler, hw_info
@@ -353,8 +353,7 @@ def main():
             "hardware": hw_info(),
             "stages": {"e2e": res},
         }
-        with open(outdir / "report_e2e.json", "w") as f:
-            json.dump(report, f, indent=2, default=_jd)
+        save_json_report(report, outdir / "report_e2e.json")
         write_csvs(report, outdir)
         write_tables(report, outdir)
         make_figures(report, outdir)

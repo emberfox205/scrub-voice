@@ -86,7 +86,8 @@ class AudioStreamer:
             "-r", str(self.sample_rate),
             "-c", str(self.HARDWARE_CHANNELS),
             "-t", "raw",
-            "--buffer-time=500000",         # 500ms ALSA buffer — prevents XRUNs on Pi
+            "--buffer-size=65536",         # Power-of-two ALSA DMA ring buffer prevents XRUNs
+            "--period-size=8192",          # Power-of-two period aligned with ~0.5s DSP chunks
             "--quiet"
         ]
 

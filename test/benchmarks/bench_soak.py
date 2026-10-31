@@ -31,9 +31,10 @@ from test.benchmarks.common.acoustics import (
     build_items,
     circular_array,
     make_sample,
+    safe_ram_first_save,
 )
 from test.benchmarks.common.registry import BUDGETS, Registry, RepoNLU
-from test.benchmarks.common.reporting import _jd
+from test.benchmarks.common.reporting import _jd, save_json_report
 from test.benchmarks.common.rig import DispatcherRig
 from test.benchmarks.common.telemetry import ResourceSampler, get_rss_mb, hw_info
 
@@ -189,14 +190,15 @@ def main():
         "hardware": hw_info(),
         "soak": res,
     }
-    with open(outdir / "report_soak.json", "w") as f:
-        json.dump(report, f, indent=2, default=_jd)
+    save_json_report(report, outdir / "report_soak.json")
 
     if res.get("series_downsampled"):
-        with open(outdir / "soak_timeseries.csv", "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["elapsed_hours", "rss_mb", "e2e_ms"])
-            w.writerows(res["series_downsampled"])
+        def _write_ts(p):
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["elapsed_hours", "rss_mb", "e2e_ms"])
+                w.writerows(res["series_downsampled"])
+        safe_ram_first_save(outdir / "soak_timeseries.csv", _write_ts)
 
     print(f"\n Results saved to: {outdir}")
 

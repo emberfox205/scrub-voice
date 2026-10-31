@@ -32,7 +32,7 @@ from test.benchmarks.common.acoustics import (
     snr_label,
 )
 from test.benchmarks.common.registry import Registry
-from test.benchmarks.common.reporting import _jd, write_csvs
+from test.benchmarks.common.reporting import _jd, save_json_report, write_csvs
 from test.benchmarks.common.stats import corpus_wer, norm_text, summarize, word_errors
 from test.benchmarks.common.telemetry import ResourceSampler, hw_info
 
@@ -175,8 +175,7 @@ def main():
             "hardware": hw_info(),
             "stages": {"asr": res},
         }
-        with open(outdir / "report_asr.json", "w") as f:
-            json.dump(report, f, indent=2, default=_jd)
+        save_json_report(report, outdir / "report_asr.json")
         write_csvs(report, outdir)
         print(f"\n Results saved to: {outdir}")
 

@@ -30,7 +30,7 @@ from src.dsp.source.beamformer import DASBeamformer
 from src.dsp.source.localizer import SRPLocalizer
 from src.dsp.source.vad import SileroVAD
 from src.dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
-from test.benchmarks.common.acoustics import simulate_array, NoiseSource
+from test.benchmarks.common.acoustics import simulate_array, NoiseSource, save_audio
 
 
 def compute_rms(signal: np.ndarray) -> float:
@@ -131,9 +131,9 @@ def process_and_dump_stages(
     p_beam = out_dir / f"{stem}_stage2_beamformed.wav"
     p_clean = out_dir / f"{stem}_stage3_denoised.wav"
 
-    sf.write(str(p_raw), raw_mic1, sr)
-    sf.write(str(p_beam), beamformed, sr)
-    sf.write(str(p_clean), denoised, sr)
+    save_audio(p_raw, raw_mic1, sr)
+    save_audio(p_beam, beamformed, sr)
+    save_audio(p_clean, denoised, sr)
 
     duration_sec = len(raw_mic1) / sr
 

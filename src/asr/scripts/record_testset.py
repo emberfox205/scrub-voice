@@ -21,9 +21,12 @@ To record a phrase again (e.g. it was cut off), overwriting its wav:
 
 import argparse
 import csv
+import os
+from pathlib import Path
+import shutil
 import sys
 import time
-from pathlib import Path
+import uuid
 
 import numpy as np
 import sounddevice as sd
@@ -33,6 +36,43 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data" / "asr"
 SAMPLE_RATE = 16000
 MANIFEST_FIELDS = ["file", "reference_text", "speaker", "notes"]
+
+
+def save_wav_ram_first(path: Path, data: np.ndarray, sample_rate: int = SAMPLE_RATE) -> Path:
+    """Writes 16-bit PCM WAV to /dev/shm in RAM first, then auto-saves to path on disk."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clipped = np.clip(data, -1.0, 1.0).astype(np.float32)
+
+    ram_base = Path("/dev/shm")
+    is_ram_available = ram_base.is_dir() and os.access(str(ram_base), os.W_OK)
+
+    try:
+        resolved = path.resolve()
+        if not is_ram_available or ram_base in resolved.parents or resolved == ram_base:
+            sf.write(str(path), clipped, sample_rate, subtype="PCM_16")
+            return path
+    except Exception:
+        pass
+
+    stage_dir = ram_base / "scrub_stage"
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_file = stage_dir / f"tmp_{uuid.uuid4().hex[:8]}_{path.name}"
+    except Exception:
+        sf.write(str(path), clipped, sample_rate, subtype="PCM_16")
+        return path
+
+    try:
+        sf.write(str(stage_file), clipped, sample_rate, subtype="PCM_16")
+        shutil.copy2(str(stage_file), str(path))
+    finally:
+        if stage_file.exists():
+            try:
+                stage_file.unlink()
+            except Exception:
+                pass
+    return path
 
 
 def load_prompts(prompts_file: Path) -> list[tuple[str, str]]:
@@ -148,14 +188,14 @@ def main() -> None:
 
         if text in args.redo:
             # Overwrite the existing clip; its manifest row stays as it is.
-            sf.write(REPO_ROOT / done[text], audio, SAMPLE_RATE, subtype="PCM_16")
+            save_wav_ram_first(REPO_ROOT / done[text], audio, SAMPLE_RATE)
             recorded_this_session += 1
             print(f"  Re-recorded {Path(done[text]).name} (peak={peak:.2f})\n")
             continue
 
         existing = list(outdir.glob(f"{args.speaker}_*.wav"))
         clip_path = outdir / f"{args.speaker}_{len(existing) + 1:03d}.wav"
-        sf.write(clip_path, audio, SAMPLE_RATE, subtype="PCM_16")
+        save_wav_ram_first(clip_path, audio, SAMPLE_RATE)
 
         # Manifest paths are relative to the repository root (what the benchmark expects).
         try:

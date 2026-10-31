@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+from test.benchmarks.common.acoustics import safe_ram_first_save
 from test.benchmarks.common.registry import BUDGETS
 
 def _try_import(name: str):
@@ -53,8 +54,16 @@ def tex_table(h: List[str], rows: List[List[str]], caption: str, label: str) -> 
     )
 
 
+def save_json_report(report: Dict[str, Any], target_path: Path) -> Path:
+    """Saves benchmark report JSON to RAM first, then safely persists to target_path."""
+    def _dump(dest: Path):
+        with open(dest, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, default=_jd)
+    return safe_ram_first_save(Path(target_path), _dump)
+
+
 def write_tables(report: Dict[str, Any], outdir: Path):
-    """Writes markdown and LaTeX tables to outdir."""
+    """Writes markdown and LaTeX tables to outdir (RAM-buffered)."""
     md, tex = [], []
     e2e = report["stages"].get("e2e", {})
     if e2e.get("summary"):
@@ -82,24 +91,29 @@ def write_tables(report: Dict[str, Any], outdir: Path):
         ]
         md += ["### DSP real-time factor", md_table(h, rows)]
         tex.append(tex_table(h, rows, "DSP real-time factor per 0.5 s chunk (single process, Raspberry Pi 4).", "tab:dsp"))
-    (outdir / "tables.md").write_text("\n\n".join(md) + "\n")
-    (outdir / "tables.tex").write_text("\n".join(tex))
+    
+    md_content = "\n\n".join(md) + "\n"
+    tex_content = "\n".join(tex)
+    safe_ram_first_save(outdir / "tables.md", lambda p: p.write_text(md_content, encoding="utf-8"))
+    safe_ram_first_save(outdir / "tables.tex", lambda p: p.write_text(tex_content, encoding="utf-8"))
 
 
 def write_csvs(report: Dict[str, Any], outdir: Path):
-    """Exports raw measurement-level rows to CSV."""
+    """Exports raw measurement-level rows to CSV (RAM-buffered)."""
     for stage, st in report["stages"].items():
         rows = st.get("raw_rows") if isinstance(st, dict) else None
         if rows:
             keys = sorted({k for r in rows for k in r})
-            with open(outdir / f"raw_{stage}.csv", "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=keys)
-                w.writeheader()
-                w.writerows(rows)
+            def _write_csv(dest: Path, _keys=keys, _rows=rows):
+                with open(dest, "w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=_keys)
+                    w.writeheader()
+                    w.writerows(_rows)
+            safe_ram_first_save(outdir / f"raw_{stage}.csv", _write_csv)
 
 
 def make_figures(report: Dict[str, Any], outdir: Path):
-    """Generates CDF latency plots and WER vs SNR curves."""
+    """Generates CDF latency plots and WER vs SNR curves (RAM-buffered)."""
     plt = _try_import("matplotlib.pyplot")
     if plt is None:
         return
@@ -114,8 +128,8 @@ def make_figures(report: Dict[str, Any], outdir: Path):
         ax.set(xlabel="post-speech latency (ms)", ylabel="CDF")
         ax.legend(fontsize=6)
         fig.tight_layout()
-        fig.savefig(outdir / "fig_e2e_latency_cdf.pdf")
-        fig.savefig(outdir / "fig_e2e_latency_cdf.png", dpi=200)
+        safe_ram_first_save(outdir / "fig_e2e_latency_cdf.pdf", lambda p: fig.savefig(p))
+        safe_ram_first_save(outdir / "fig_e2e_latency_cdf.png", lambda p: fig.savefig(p, dpi=200))
         plt.close(fig)
 
         snr_order = [s for s in ["clean", "20dB", "15dB", "10dB", "5dB", "0dB"] if any(r["snr"] == s for r in rows)]
@@ -130,8 +144,8 @@ def make_figures(report: Dict[str, Any], outdir: Path):
             ax.set(xlabel="SNR", ylabel="WER (%)")
             ax.legend(fontsize=6)
             fig.tight_layout()
-            fig.savefig(outdir / "fig_wer_vs_snr.pdf")
-            fig.savefig(outdir / "fig_wer_vs_snr.png", dpi=200)
+            safe_ram_first_save(outdir / "fig_wer_vs_snr.pdf", lambda p: fig.savefig(p))
+            safe_ram_first_save(outdir / "fig_wer_vs_snr.png", lambda p: fig.savefig(p, dpi=200))
             plt.close(fig)
 
 

@@ -28,7 +28,7 @@ if str(REPO_ROOT) not in sys.path:
 import numpy as np
 
 from test.benchmarks.common.registry import BUDGETS, DEFAULT_NLU_EVAL, RepoNLU, TfidfNLU, _try_import
-from test.benchmarks.common.reporting import _jd, md_table, write_csvs
+from test.benchmarks.common.reporting import _jd, md_table, save_json_report, write_csvs
 from test.benchmarks.common.stats import paired_test, slots_match, summarize, wilson
 from test.benchmarks.common.telemetry import ResourceSampler, get_rss_mb, hw_info
 
@@ -203,8 +203,7 @@ def main():
             "hardware": hw_info(),
             "stages": {"nlu": res},
         }
-        with open(outdir / "report_nlu.json", "w") as f:
-            json.dump(report, f, indent=2, default=_jd)
+        save_json_report(report, outdir / "report_nlu.json")
         write_csvs(report, outdir)
         print(f"\n Results saved to: {outdir}")
 

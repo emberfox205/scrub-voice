@@ -12,8 +12,11 @@ from dataclasses import dataclass, field
 import importlib
 import json
 import math
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+import shutil
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import uuid
 
 import numpy as np
 
@@ -28,6 +31,45 @@ sps = _try_import("scipy.signal")
 spio = _try_import("scipy.io.wavfile")
 
 C_SOUND = 343.0
+
+
+def safe_ram_first_save(target_path: Path, write_fn: Callable[[Path], Any]) -> Path:
+    """Executes write_fn on a RAM buffer (/dev/shm) first to prevent flash I/O blocking,
+    then automatically flushes/copies to target_path ('auto-save to here').
+    """
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ram_base = Path("/dev/shm")
+    is_ram_available = ram_base.is_dir() and os.access(str(ram_base), os.W_OK)
+
+    try:
+        resolved_target = target_path.resolve()
+        if not is_ram_available or ram_base in resolved_target.parents or resolved_target == ram_base:
+            write_fn(target_path)
+            return target_path
+    except Exception:
+        pass
+
+    stage_dir = ram_base / "scrub_stage"
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage_file = stage_dir / f"tmp_{uuid.uuid4().hex[:8]}_{target_path.name}"
+    except Exception:
+        write_fn(target_path)
+        return target_path
+
+    try:
+        write_fn(stage_file)
+        # Safely copy from RAM to target destination on disk ("auto save to here")
+        shutil.copy2(str(stage_file), str(target_path))
+    finally:
+        if stage_file.exists():
+            try:
+                stage_file.unlink()
+            except Exception:
+                pass
+    return target_path
 
 
 def load_audio(path: Path, sr_target: int) -> np.ndarray:
@@ -48,13 +90,29 @@ def load_audio(path: Path, sr_target: int) -> np.ndarray:
     return x
 
 
-def save_audio(path: Path, x: np.ndarray, sr: int):
-    """Saves audio array to 16-bit PCM WAV."""
-    data = np.clip(x.T if x.ndim == 2 else x, -1, 1).astype(np.float32)
-    if sf is not None:
-        sf.write(str(path), data, sr)
-    elif spio is not None:
-        spio.write(str(path), sr, (data * 32767).astype(np.int16))
+def save_audio(path: Path, x: np.ndarray, sr: int) -> Path:
+    """Saves audio array to 16-bit PCM WAV safely (RAM-first, then auto-saved to disk)."""
+    # 1. Correct format and bit depth: 16-bit PCM [-1.0, 1.0] -> signed int16
+    data = np.clip(x.T if x.ndim == 2 else x, -1.0, 1.0).astype(np.float32)
+
+    def _write_pcm16(dest: Path):
+        if sf is not None:
+            # Enforce 16-bit signed PCM WAV
+            sf.write(str(dest), data, sr, subtype="PCM_16")
+        elif spio is not None:
+            pcm16 = (data * 32767.0).astype(np.int16)
+            spio.write(str(dest), sr, pcm16)
+        else:
+            import wave
+            pcm16 = (data * 32767.0).astype(np.int16)
+            with wave.open(str(dest), "wb") as wf:
+                channels = pcm16.shape[1] if pcm16.ndim > 1 else 1
+                wf.setnchannels(channels)
+                wf.setsampwidth(2)  # 16-bit PCM = 2 bytes
+                wf.setframerate(sr)
+                wf.writeframes(pcm16.tobytes())
+
+    return safe_ram_first_save(Path(path), _write_pcm16)
 
 
 def circular_array(n: int, radius: float) -> np.ndarray:
