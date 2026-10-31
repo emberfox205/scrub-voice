@@ -44,6 +44,7 @@ def process_and_dump_stages(
     denoiser_type: str = "duofilter",
     vad_threshold: float = 0.40,
     force_simulate_array: bool = False,
+    atten_lim_db: float = 20.0,
 ) -> dict:
     """Processes input audio stage-by-stage and saves WAVs for acoustic listening."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -113,7 +114,7 @@ def process_and_dump_stages(
     if not denoiser_model.exists():
         denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / f"{denoiser_type}.onnx"
 
-    denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1)
+    denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
     denoised = denoiser.enhance(beamformed, sample_rate=sr)
 
     # 5. Energy Metrics
@@ -194,6 +195,12 @@ def main():
         action="store_true",
         help="Force simulation of 6-microphone array if input is mono",
     )
+    parser.add_argument(
+        "--atten-lim-db",
+        type=float,
+        default=20.0,
+        help="Attenuation limit in dB (e.g. 10.0 or 6.0 to preserve natural floor for ASR)",
+    )
 
     args = parser.parse_args()
     if not args.input.exists():
@@ -205,6 +212,7 @@ def main():
         out_dir=args.out_dir,
         denoiser_type=args.denoiser_type,
         force_simulate_array=args.simulate_array,
+        atten_lim_db=args.atten_lim_db,
     )
 
 
