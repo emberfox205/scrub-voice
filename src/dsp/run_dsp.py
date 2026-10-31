@@ -173,6 +173,8 @@ def run_dsp_service(
     )
 
     in_speech = False
+    silence_chunks = 0
+    HANGOVER_SILENCE_CHUNKS = 2  # Require 2 consecutive silence chunks (~1.0s) before ending utterance
     chunk_index = 0
     utterance_count = 0
     current_raw_mic1: list[np.ndarray] = []
@@ -239,14 +241,18 @@ def run_dsp_service(
 
                 if not is_speech:
                     if in_speech:
-                        # Speech just ended: send 'end' message to trigger final ASR transcription
-                        push.send_multipart([orjson.dumps({"type": "end"})])
-                        save_current_utterance()
-                        in_speech = False
-                        logger.info(f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR")
+                        silence_chunks += 1
+                        if silence_chunks >= HANGOVER_SILENCE_CHUNKS:
+                            # Speech genuinely ended after sustained silence: send 'end' message to trigger final ASR transcription
+                            push.send_multipart([orjson.dumps({"type": "end"})])
+                            save_current_utterance()
+                            in_speech = False
+                            silence_chunks = 0
+                            logger.info(f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR")
                     continue
 
                 in_speech = True
+                silence_chunks = 0
 
                 # Gate 2 & Mod 3: Spatial Localizer & DAS Beamformer
                 mono_audio = None

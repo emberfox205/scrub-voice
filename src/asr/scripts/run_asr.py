@@ -168,7 +168,7 @@ def main() -> None:
     parser.add_argument("--config", default=PRODUCTION_CONFIG, choices=list(CONFIGS))
     parser.add_argument("--audio-addr", default=DEFAULT_AUDIO_ADDR)
     parser.add_argument("--asr-addr", default=DEFAULT_ASR_ADDR)
-    parser.add_argument("--end-timeout", type=float, default=0.8,
+    parser.add_argument("--end-timeout", type=float, default=2.5,
                         help="Seconds without a chunk after which an utterance counts as finished")
     args = parser.parse_args()
 

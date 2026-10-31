@@ -145,6 +145,8 @@ class Supervisor:
         asr_cmd = [
             py_exec,
             str(REPO_ROOT / "src" / "asr" / "scripts" / "run_asr.py"),
+            "--end-timeout",
+            "2.5",
         ]
         self.services["ASR"] = ServiceSpec(name="ASR", cmd=asr_cmd, max_restarts=self.max_restarts)
 
