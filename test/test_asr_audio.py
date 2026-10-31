@@ -161,6 +161,7 @@ def inspect_audio_asr(
             if nlu_pipeline:
                 try:
                     envelope = nlu_pipeline.process(utt["text"])
+                    utt["envelope"] = envelope
                     print(f"      -> Intent  : {envelope.get('intent')} ({envelope.get('category')})")
                     print(f"      -> Status  : {envelope.get('status')} [Priority: {envelope.get('priority')}]")
                     print(f"      -> Slots   : {json.dumps(envelope.get('slots'))}")
@@ -174,6 +175,10 @@ def inspect_audio_asr(
                 marker = "✓" if w.word.lower() in grammar_words else "○"
                 print(f"    [{w.start:5.2f}s - {w.end:5.2f}s] {marker} {w.word:<15} (conf: {w.confidence:.2%})")
 
+        primary_intent = "N/A"
+        if segmented_utterances and "envelope" in segmented_utterances[0]:
+            primary_intent = segmented_utterances[0]["envelope"].get("intent", "N/A")
+
         results.append({
             "file": wav_path.name,
             "duration": audio_dur,
@@ -182,6 +187,7 @@ def inspect_audio_asr(
             "transcript": transcript,
             "confidence": confidence,
             "utterances": len(segmented_utterances),
+            "primary_intent": primary_intent,
         })
         print("-" * 70)
 
@@ -193,7 +199,7 @@ def inspect_audio_asr(
         print(f"{'File':<25} | {'Dur(s)':<6} | {'RTF':<6} | {'Intent':<16} | {'Transcript':<25}")
         print("-" * 70)
         for r in results:
-            intent = r["nlu"]["intent"] if r["nlu"] else "N/A"
+            intent = r.get("primary_intent", "N/A")
             text = (r["transcript"][:22] + "...") if len(r["transcript"]) > 22 else r["transcript"]
             print(f"{r['file'][:25]:<25} | {r['duration']:<6.2f} | {r['rtf']:<6.3f} | {intent:<16} | {text:<25}")
         print("=" * 70 + "\n")
