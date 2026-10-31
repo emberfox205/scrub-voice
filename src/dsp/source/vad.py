@@ -28,9 +28,9 @@ class SileroVAD:
             # Single channel
             ref_audio = audio_chunk
         else:
-            # Multichannel array: (num_mics, num_samples)
-            # Average the energy across all mics
-            ref_audio = np.mean(audio_chunk, axis=0)
+            # Multichannel array: use Mic 0 as reference 
+            # (avoids destructive phase cancellation)
+            ref_audio = audio_chunk[0]
 
         # Convert to PyTorch tensor for Silero Model
         tensor_audio = torch.from_numpy(ref_audio).float()
