@@ -33,9 +33,14 @@ Measured via `python test/test_edge.py` with direct OS core affinity pinning and
 
 ### C. Accuracy, Robustness & Reliability Profile
 * **Intent Classification Accuracy (`bench_nlu.py`):** **94.1%** across 34 clinical command test cases.
+* **Isolated Multi-Repetition Benchmark (`bench_nlu.py`, 85 reps per config on Pi 4):**
+  * `1thr_pinned`: mean **152.77 ms**, p50 **152.74 ms**, p95 **156.92 ms**
+  * `2thr_free`: mean **158.96 ms**, p50 **159.92 ms**, p95 **163.20 ms**
+  * `3thr_free`: mean **157.81 ms**, p50 **158.65 ms**, p95 **162.83 ms**
+  * Sustained CPU Load: 138.7% mean (across 4 cores), Peak RAM: 704.2 MB, Peak Temp: 58.4°C (`throttled=0x0`).
 * **Out-of-Domain (OOD) Rejection:** **100.0%** (OOD-FAR = 0.0%, non-surgical conversational chatter rejected with zero false activations).
 * **Draft 2020-12 Schema Compliance:** **100.0%** strictly valid JSON envelopes verified by `schemas/command_schema.json`.
-* **RAM Footprint:** Base process: 530.57 MB, Post-Load: 587.04 MB (Net Model Delta: **+56.46 MB**), Peak RAM during inference: **589.73 MB**.
+* **RAM Footprint:** Base process: 530.57 MB, Post-Load: 587.04 MB (Net Model Delta: **+56.46 MB**), Peak RAM during inference: **589.73 MB** (Single-run) / **704.2 MB** (Continuous multi-rep sweep).
 
 ---
 
