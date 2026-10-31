@@ -13,7 +13,9 @@ import argparse
 import json
 import math
 import os
+import platform
 import queue
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -37,12 +39,6 @@ from test.benchmarks.common.telemetry import ResourceSampler, hw_info
 
 def bench_live(args, reg: Registry, nlu, rig, mic_xy: np.ndarray, outdir: Path) -> Dict[str, Any]:
     print("\n" + "=" * 72 + f"\n [LIVE] Real-Time Hardware Capture ({args.live_seconds:g}s from array)\n" + "=" * 72)
-    sd = _try_import("sounddevice")
-    if sd is None:
-        return {
-            "status": "SKIPPED",
-            "reason": "sounddevice not installed (run: pip install sounddevice; apt install libportaudio2)",
-        }
 
     variants = make_variants(args, reg)
     if not variants or nlu is None:
@@ -52,58 +48,88 @@ def bench_live(args, reg: Registry, nlu, rig, mic_xy: np.ndarray, outdir: Path) 
     bf, dn, asr = reg.get("bf", var.bf), reg.get("dn", var.dn), reg.get("asr", var.asr)
     sr = args.sr
     target_chunk = int(args.chunk_s * args.sr)
-    # Use aligned 1024-frame power-of-two hardware blocks for ALSA driver stability
-    hw_block = 1024 if (target_chunk >= 1024 and target_chunk % 1024 != 0) else min(1024, target_chunk)
     n_chunks = int(math.ceil(args.live_seconds / args.chunk_s))
-    q: queue.Queue = queue.Queue()
     overflow = [0]
-    accum_chunks: list[np.ndarray] = []
-    accum_count = 0
-    t_chunk_start = pc()
-
-    def callback(indata, frames, time_info, status):
-        nonlocal accum_chunks, accum_count, t_chunk_start
-        if status.input_overflow:
-            overflow[0] += 1
-        if not accum_chunks:
-            t_chunk_start = pc()
-        accum_chunks.append(indata.copy())
-        accum_count += frames
-        if accum_count >= target_chunk:
-            full = np.concatenate(accum_chunks, axis=0)
-            chunk = full[:target_chunk]
-            remainder = full[target_chunk:]
-            accum_chunks = [remainder] if len(remainder) > 0 else []
-            accum_count = len(remainder)
-            q.put((t_chunk_start, chunk))
-
-    asr.reset()
     raw, lat, backlog, rtf = [], [], [], []
     tcap = tdone = 0.0
 
+    asr.reset()
+
+    # Determine backend: On Linux/Pi, use direct DMA-aligned ALSA AudioStreamer (avoids PortAudio deadlocks)
+    use_arecord = (platform.system() == "Linux" and shutil.which("arecord") is not None)
+
     print("  [>] Recording & processing in real time... Speak now!")
-    try:
-        with sd.InputStream(
-            samplerate=sr,
-            channels=args.live_channels,
-            blocksize=hw_block,
-            dtype="float32",
-            device=args.live_device,
-            callback=callback,
-        ):
-            for _ in range(n_chunks):
-                tcap, data = q.get(timeout=6.0)
-                raw.append(data)
-                mc = data.T[[i for i in args.mic_idx if i < data.shape[1]]]
-                t0 = pc()
-                y, _ = bf.process(mc, sr)
-                asr.accept(dn.process(y, sr))
-                tdone = pc()
-                rtf.append((tdone - t0) / args.chunk_s)
-                lat.append((tdone - tcap) * 1000)
-                backlog.append(q.qsize())
-    except Exception as e:
-        return {"status": "ERROR", "reason": f"Sounddevice InputStream error: {e}"}
+    if use_arecord:
+        from src.dsp.source.audio_streamer import AudioStreamer
+
+        device = args.live_device if args.live_device else "plughw:seeed8micvoicec,0"
+        try:
+            with AudioStreamer(device=device, sample_rate=sr, chunk_duration=args.chunk_s) as streamer:
+                for _ in range(n_chunks):
+                    tcap = pc()
+                    mc = streamer.read_chunk()  # shape: (6, samples)
+                    raw.append(mc.T)
+                    t0 = pc()
+                    y, _ = bf.process(mc, sr)
+                    asr.accept(dn.process(y, sr))
+                    tdone = pc()
+                    rtf.append((tdone - t0) / args.chunk_s)
+                    lat.append((tdone - tcap) * 1000)
+                    backlog.append(0)
+        except Exception as e:
+            return {"status": "ERROR", "reason": f"ALSA AudioStreamer capture error: {e}"}
+    else:
+        sd = _try_import("sounddevice")
+        if sd is None:
+            return {
+                "status": "SKIPPED",
+                "reason": "sounddevice not installed and arecord unavailable",
+            }
+        # Use aligned 1024-frame power-of-two hardware blocks for PortAudio driver stability
+        hw_block = 1024 if (target_chunk >= 1024 and target_chunk % 1024 != 0) else min(1024, target_chunk)
+        q: queue.Queue = queue.Queue()
+        accum_chunks: list[np.ndarray] = []
+        accum_count = 0
+        t_chunk_start = pc()
+
+        def callback(indata, frames, time_info, status):
+            nonlocal accum_chunks, accum_count, t_chunk_start
+            if status.input_overflow:
+                overflow[0] += 1
+            if not accum_chunks:
+                t_chunk_start = pc()
+            accum_chunks.append(indata.copy())
+            accum_count += frames
+            if accum_count >= target_chunk:
+                full = np.concatenate(accum_chunks, axis=0)
+                chunk = full[:target_chunk]
+                remainder = full[target_chunk:]
+                accum_chunks = [remainder] if len(remainder) > 0 else []
+                accum_count = len(remainder)
+                q.put((t_chunk_start, chunk))
+
+        try:
+            with sd.InputStream(
+                samplerate=sr,
+                channels=args.live_channels,
+                blocksize=hw_block,
+                dtype="float32",
+                device=args.live_device,
+                callback=callback,
+            ):
+                for _ in range(n_chunks):
+                    tcap, data = q.get(timeout=6.0)
+                    raw.append(data)
+                    mc = data.T[[i for i in args.mic_idx if i < data.shape[1]]]
+                    t0 = pc()
+                    y, _ = bf.process(mc, sr)
+                    asr.accept(dn.process(y, sr))
+                    tdone = pc()
+                    rtf.append((tdone - t0) / args.chunk_s)
+                    lat.append((tdone - tcap) * 1000)
+                    backlog.append(q.qsize())
+        except Exception as e:
+            return {"status": "ERROR", "reason": f"Sounddevice InputStream error: {e}"}
 
     t0 = pc()
     text = asr.finalize()
