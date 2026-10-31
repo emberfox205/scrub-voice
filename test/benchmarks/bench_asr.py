@@ -121,6 +121,8 @@ def bench_asr(args, reg: Registry, items, mic_xy: np.ndarray, noise: NoiseSource
 def parse_args():
     p = argparse.ArgumentParser(description="SCRUB-VOICE isolated ASR benchmark")
     p.add_argument("--manifest", help="JSONL labelled dataset with audio paths and text")
+    p.add_argument("--wav", help="Single WAV file")
+    p.add_argument("--synthetic", type=int, default=2, help="N synthetic speech clips")
     p.add_argument("--noise-wav", help="Noise WAV for SNR sweeps")
     p.add_argument("--snr-sweep", default="20,10,0")
     p.add_argument("--seeds", type=int, default=1)
