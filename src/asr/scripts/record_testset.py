@@ -23,13 +23,14 @@ import argparse
 import csv
 import os
 from pathlib import Path
+import platform
 import shutil
+import subprocess
 import sys
 import time
 import uuid
 
 import numpy as np
-import sounddevice as sd
 import soundfile as sf
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -113,9 +114,36 @@ def record_clip(duration: float) -> np.ndarray:
         print(f"  {n}...", end=" ", flush=True)
         time.sleep(0.6)
     print("speak now!")
-    audio = sd.rec(int(duration * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="float32")
-    sd.wait()
-    return audio[:, 0]
+
+    if platform.system() == "Linux" and shutil.which("arecord"):
+        n_samples = int(duration * SAMPLE_RATE)
+        cmd = [
+            "arecord",
+            "-f", "S16_LE",
+            "-r", str(SAMPLE_RATE),
+            "-c", "1",
+            "-d", str(int(duration) + 1),
+            "-t", "raw",
+            "--buffer-size=65536",
+            "--period-size=8192",
+            "--quiet",
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        raw_bytes = proc.stdout.read(n_samples * 2)
+        proc.terminate()
+        try:
+            proc.wait(timeout=0.5)
+        except Exception:
+            proc.kill()
+        pcm = np.frombuffer(raw_bytes, dtype=np.int16)
+        if len(pcm) < n_samples:
+            pcm = np.pad(pcm, (0, n_samples - len(pcm)))
+        return pcm[:n_samples].astype(np.float32) / 32768.0
+    else:
+        import sounddevice as sd
+        audio = sd.rec(int(duration * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="float32")
+        sd.wait()
+        return audio[:, 0]
 
 
 def speech_at_the_end(audio: np.ndarray) -> bool:
