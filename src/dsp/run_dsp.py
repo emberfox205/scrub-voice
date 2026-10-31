@@ -47,46 +47,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [DSP
 logger = logging.getLogger("dsp")
 
 
-def save_wav_ram_first(path: Path, data: np.ndarray, sample_rate: int) -> Path:
-    """Saves audio array to 16-bit PCM WAV: writes to /dev/shm (RAM) first, then auto-saves to path."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    clipped = np.clip(data, -1.0, 1.0).astype(np.float32)
-
-    ram_base = Path("/dev/shm")
-    is_ram_available = ram_base.is_dir() and os.access(str(ram_base), os.W_OK)
-
-    try:
-        resolved = path.resolve()
-        if not is_ram_available or ram_base in resolved.parents or resolved == ram_base:
-            sf.write(str(path), clipped, sample_rate, subtype="PCM_16")
-            return path
-    except Exception:
-        pass
-
-    import shutil
-    import uuid
-
-    stage_dir = ram_base / "scrub_stage"
-    try:
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        stage_file = stage_dir / f"tmp_{uuid.uuid4().hex[:8]}_{path.name}"
-    except Exception:
-        sf.write(str(path), clipped, sample_rate, subtype="PCM_16")
-        return path
-
-    try:
-        sf.write(str(stage_file), clipped, sample_rate, subtype="PCM_16")
-        shutil.copy2(str(stage_file), str(path))
-    finally:
-        if stage_file.exists():
-            try:
-                stage_file.unlink()
-            except Exception:
-                pass
-    return path
-
-
 def connect_push_socket(addr: str, max_retries: int = 10, retry_delay: float = 0.5) -> tuple[zmq.Context, zmq.Socket]:
     """Connect PUSH socket to ASR with retry for IPC endpoint existence."""
     context = zmq.Context.instance()
@@ -118,7 +78,6 @@ def run_dsp_service(
     vad_threshold: float = 0.5,
     realtime: bool = True,
     loop: bool = False,
-    dump_dir: Optional[Path] = None,
 ) -> None:
     """Run the DSP streaming loop."""
     logger.info("Initializing DSP subsystems...")
@@ -176,47 +135,6 @@ def run_dsp_service(
     silence_chunks = 0
     HANGOVER_SILENCE_CHUNKS = 2  # Require 2 consecutive silence chunks (~1.0s) before ending utterance
     chunk_index = 0
-    utterance_count = 0
-    current_raw_mic1: list[np.ndarray] = []
-    current_beamformed: list[np.ndarray] = []
-    current_denoised: list[np.ndarray] = []
-    all_raw_mic1: list[np.ndarray] = []
-    all_beamformed: list[np.ndarray] = []
-    all_denoised: list[np.ndarray] = []
-
-    if dump_dir:
-        dump_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Audio dump enabled -> 3 stages (raw, beamformed, denoised) will be saved to {dump_dir}")
-
-    def save_current_utterance() -> None:
-        nonlocal utterance_count, current_raw_mic1, current_beamformed, current_denoised
-        if not dump_dir or not current_denoised:
-            return
-        utterance_count += 1
-        raw_m1 = np.concatenate(current_raw_mic1)
-        beam_m = np.concatenate(current_beamformed)
-        clean_m = np.concatenate(current_denoised)
-
-        raw_path = dump_dir / f"utterance_{utterance_count:03d}_1_raw_mic1.wav"
-        beam_path = dump_dir / f"utterance_{utterance_count:03d}_2_beamformed.wav"
-        clean_path = dump_dir / f"utterance_{utterance_count:03d}_3_denoised.wav"
-
-        save_wav_ram_first(raw_path, raw_m1, SAMPLE_RATE)
-        save_wav_ram_first(beam_path, beam_m, SAMPLE_RATE)
-        save_wav_ram_first(clean_path, clean_m, SAMPLE_RATE)
-
-        rms_raw = float(np.sqrt(np.mean(raw_m1**2)))
-        rms_beam = float(np.sqrt(np.mean(beam_m**2)))
-        rms_clean = float(np.sqrt(np.mean(clean_m**2)))
-        db_diff = 20 * np.log10((rms_clean + 1e-9) / (rms_raw + 1e-9))
-
-        logger.info(
-            f"Saved utterance #{utterance_count:03d} -> [1] Raw: {raw_path.name} | [2] Beamformed: {beam_path.name} "
-            f"| [3] Denoised: {clean_path.name} (Delta: {db_diff:+.1f} dB, Duration: {len(clean_m)/SAMPLE_RATE:.2f}s)"
-        )
-        current_raw_mic1 = []
-        current_beamformed = []
-        current_denoised = []
 
     try:
         with streamer:
@@ -279,17 +197,6 @@ def run_dsp_service(
                 rms_out = float(np.sqrt(np.mean(clean_chunk**2)))
                 chunk_db = 20 * np.log10((rms_out + 1e-9) / (rms_in + 1e-9))
 
-                # Extract Channel 0 (Microphone 1) for raw A/B/C comparison
-                raw_mic1_audio = chunk[0] if chunk.ndim > 1 else chunk
-
-                if dump_dir:
-                    current_raw_mic1.append(raw_mic1_audio.copy())
-                    current_beamformed.append(mono_audio.copy())
-                    current_denoised.append(clean_chunk.copy())
-                    all_raw_mic1.append(raw_mic1_audio.copy())
-                    all_beamformed.append(mono_audio.copy())
-                    all_denoised.append(clean_chunk.copy())
-
                 header = {"type": "chunk", "capture_time": capture_time}
                 push.send_multipart([orjson.dumps(header), clean_chunk.astype(np.float32).tobytes()])
                 logger.info(
@@ -299,16 +206,6 @@ def run_dsp_service(
     except KeyboardInterrupt:
         logger.info("DSP service interrupted by user.")
     finally:
-        if dump_dir:
-            save_current_utterance()
-            if all_denoised:
-                raw_session = dump_dir / "session_1_raw_mic1.wav"
-                beam_session = dump_dir / "session_2_beamformed.wav"
-                clean_session = dump_dir / "session_3_denoised.wav"
-                save_wav_ram_first(raw_session, np.concatenate(all_raw_mic1), SAMPLE_RATE)
-                save_wav_ram_first(beam_session, np.concatenate(all_beamformed), SAMPLE_RATE)
-                save_wav_ram_first(clean_session, np.concatenate(all_denoised), SAMPLE_RATE)
-                logger.info(f"Saved full session 3 stages: {raw_session.name}, {beam_session.name}, {clean_session.name}")
         if in_speech:
             try:
                 push.send_multipart([orjson.dumps({"type": "end"})], flags=zmq.NOBLOCK)
@@ -335,7 +232,6 @@ def main() -> None:
     parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD threshold")
     parser.add_argument("--fast", dest="realtime", action="store_false", help="Simulate faster than real time")
     parser.add_argument("--loop", action="store_true", help="Loop WAV file continuously")
-    parser.add_argument("--dump-audio", type=Path, default=None, help="Directory to save cleaned audio utterances and full session")
     parser.set_defaults(denoise=True, spatial=True, realtime=True)
 
     args = parser.parse_args()
@@ -349,7 +245,6 @@ def main() -> None:
         vad_threshold=args.vad_threshold,
         realtime=args.realtime,
         loop=args.loop,
-        dump_dir=args.dump_audio,
     )
 
 

@@ -86,7 +86,6 @@ class Supervisor:
         denoiser_type: str = "duofilter",
         dsp_spatial: bool = True,
         nlu_threads: int = 2,
-        dump_audio: Optional[Path] = None,
     ) -> None:
         self.wav_path = wav_path
         self.device = device
@@ -99,7 +98,6 @@ class Supervisor:
         self.denoiser_type = denoiser_type
         self.dsp_spatial = dsp_spatial
         self.nlu_threads = nlu_threads
-        self.dump_audio = dump_audio
 
         self._running = False
         self._shutting_down = False
@@ -169,8 +167,6 @@ class Supervisor:
                 dsp_cmd.extend(["--denoiser-type", self.denoiser_type])
             if not self.dsp_spatial:
                 dsp_cmd.append("--no-spatial")
-            if self.dump_audio:
-                dsp_cmd.extend(["--dump-audio", str(self.dump_audio)])
 
             self.services["DSP"] = ServiceSpec(
                 name="DSP",
@@ -395,7 +391,6 @@ def main():
     parser.add_argument("--nlu-threads", type=int, default=2, help="PyTorch CPU threads for NLU (default: 2)")
     parser.add_argument("--single-pass", action="store_true", help="Stop pipeline after one pass of the WAV file")
     parser.add_argument("--max-restarts", type=int, default=5, help="Maximum auto-restarts per service")
-    parser.add_argument("--dump-audio", type=Path, default=None, help="Directory to save cleaned audio utterances and full session")
     args = parser.parse_args()
 
     supervisor = Supervisor(
@@ -410,7 +405,6 @@ def main():
         denoiser_type=args.denoiser_type,
         dsp_spatial=not args.no_spatial,
         nlu_threads=args.nlu_threads,
-        dump_audio=args.dump_audio,
     )
 
     def handle_sig(sig, frame):
