@@ -141,7 +141,7 @@ class DASBeamformer:
             zeros = np.zeros(num_samples, dtype=np.float32)
             return zeros if is_single else [zeros for _ in range(num_targets)]
 
-                # -------------------------------------------------------------
+        # -------------------------------------------------------------
         # Center-Padding: Symmetrically pad boundaries (similar to PyTorch center=True)
         # Guarantees all original samples fall inside the flat COLA reconstruction zone,
         # eliminating the 64-sample silence gap and boundary fading.
