@@ -56,3 +56,13 @@ data/asr/noise_only/
 # Heavy Binary
 *.safetensors
 artifacts/
+
+# Temporary archives, patches, and deployment bundles
+*.patch
+*.diff
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+
