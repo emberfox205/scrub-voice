@@ -26,8 +26,12 @@ DEVICE = "plughw:seeed8micvoicec,0"  # ReSpeaker 6-Mic array on Raspberry Pi
 SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.5                 # 500ms chunks (8000 samples)
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_DURATION)
-MAX_TTL_FRAMES = 4      # 4 frames * 0.5s = 2.0s tracking memory
+
+MAX_TTL_FRAMES = 5      # 5 frames * 0.5s = 2.5s tracking memory
 TOLERANCE_DEG = 15.0    # Tolerance for the difference between 2 distinguishable angles
+
+VERIFICATION_WINDOW_SEC = 1.5   # Desired evaluation window in seconds
+VERIFICATION_CHUNKS = int(VERIFICATION_WINDOW_SEC / CHUNK_DURATION) # Automatically = 4 chunks
 
 DOCTOR_PROFILE_PATH = DSP_DIR / "models" / "ecapa_tdnn" / "doctor_profile.npy"
 OUTPUT_DIR = REPO_ROOT / "data" / "dsp" / "output"
@@ -101,8 +105,8 @@ def run_live_pipeline():
     doctor_recording = []   # Retains ONLY the confirmed Lead Surgeon audio
     active_speakers = {}    # {track_angle: remaining_ttl_frames}
     candidate_buffers = {}  # {track_angle: [chunks]} (1.5s buffer while searching for doctor)
-    doctor_angle = None     # Points to the Doctor's angle (e.g. 45.0°), or None
-
+    last_doc_angle = None
+    
     try:
         # Open ALSA audio capture stream
         with AudioStreamer(device=DEVICE, sample_rate=SAMPLE_RATE, chunk_duration=CHUNK_DURATION) as streamer:
@@ -131,14 +135,11 @@ def run_live_pipeline():
                 vad_ms = (time.perf_counter() - t_vad) * 1000
 
                 if not is_speech:
-                    # On silence, decremet tracks, if doctor paused > 2.0s, reset lock
                     for tracked_ang in list(active_speakers.keys()):
                         active_speakers[tracked_ang] -= 1
                         if active_speakers[tracked_ang] <= 0:
                             del active_speakers[tracked_ang]
                             candidate_buffers.pop(tracked_ang, None)
-                            if doctor_angle == tracked_ang:
-                                doctor_angle = None
 
                     print(
                         f"[{timestamp}] #{frame_count:04d} | "
@@ -147,45 +148,39 @@ def run_live_pipeline():
                     )
                     continue 
 
-                # ---------------------------------------
+                # -------------------------------------------------------------
                 # Gate 2: Direction of Arrival (SRP-PHAT)
-                # ---------------------------------------
-                t_loc = time.perf_counter()
+                # -------------------------------------------------------------
+                t_loc = time.perf_counter() 
                 detected_angles, _ = localizer.localize(chunk)
                 loc_ms = (time.perf_counter() - t_loc) * 1000
 
-                # Update active speaker tracks (±15° tolerance for walking)
                 matched_tracks = set()
-
+                # Update detected angles (or register new ones)
                 for ang in detected_angles:
                     matched_track = None
                     for tracked_ang in active_speakers:
                         circ_diff = min(abs(ang - tracked_ang), 360.0 - abs(ang - tracked_ang))
                         if circ_diff <= TOLERANCE_DEG:
                             matched_track = tracked_ang
-                            break 
+                            break
 
                     if matched_track is not None:
-                        # Existing speaker: refresh TTL to 4 (2.0s)
                         active_speakers[matched_track] = MAX_TTL_FRAMES
                         matched_tracks.add(matched_track)
                     else:
-                        # New speaker angle: create new track and ECAPA candidate buffer
                         active_speakers[ang] = MAX_TTL_FRAMES
                         candidate_buffers[ang] = []
                         matched_tracks.add(ang)
 
-                # Decrement TTL for tracks that were silent this chunk
+                # Decrement inactive tracks by 1 frame
                 for tracked_ang in list(active_speakers.keys()):
                     if tracked_ang not in matched_tracks:
                         active_speakers[tracked_ang] -= 1
                         if active_speakers[tracked_ang] <= 0:
                             del active_speakers[tracked_ang]
                             candidate_buffers.pop(tracked_ang, None)
-                            if doctor_angle == tracked_ang:
-                                doctor_angle = None
 
-                # If no speakers are currently active, skip beamforming
                 if not active_speakers:
                     continue
 
@@ -197,52 +192,48 @@ def run_live_pipeline():
                 enhanced_streams = beamformer.beamform(chunk, target_angles=target_angles_to_steer)
                 beam_ms = (time.perf_counter() - t_beam) * 1000
 
-                # Save raw reference channel (Mic 0) for diagnostics
+                # Save fraw reference channel (Mic 0) for diagnostics
                 raw_recording.append(chunk[0].copy())
 
-                # ---------------------------------
-                # Gate 4: Target Speaker Extraction
-                # ---------------------------------
+                # -------------------------------------------------------------
+                # Gate 4: Pure Biometric Filter (ECAPA Tumbling Window)
+                # -------------------------------------------------------------
                 t_veri = time.perf_counter()
                 ecapa_checked = False
 
                 for angle, stream in zip(target_angles_to_steer, enhanced_streams):
-                    if angle in candidate_buffers:
-                        # Accumulate candidate stream (aiming for 1.5s = 3 chunks)
-                        candidate_buffers[angle].append(stream.copy())
+                    if angle not in candidate_buffers:
+                        candidate_buffers[angle] = []
+                    candidate_buffers[angle].append(stream.copy())
 
-                        if len(candidate_buffers[angle]) >= 3:
-                            cand_audio = np.concatenate(candidate_buffers[angle])
-                            is_doc, score = verifier.verify(cand_audio, doctor_embedding)
-                            ecapa_checked = True 
+                    # Trigger ECAPA when 1.5s (3 chunks) accumulate
+                    if len(candidate_buffers[angle]) >= VERIFICATION_CHUNKS:
+                        cand_audio = np.concatenate(candidate_buffers[angle])
+                        is_doc, score = verifier.verify(cand_audio, doctor_embedding)
+                        ecapa_checked = True
 
-                            if is_doc:
-                                # Doctor confirmed! Lock angle & flush buffered audio
-                                doctor_angle = angle
-                                doctor_recording.extend(candidate_buffers[angle])
+                        if is_doc:
+                            doctor_recording.extend(candidate_buffers[angle])
+                            last_doc_angle = angle
+                            print(
+                                f"[{timestamp}] DOCTOR at {angle:.0f}° "
+                                f"(Score: {score:.3f} >= {verifier.threshold}) ──► 1.5s Audio Extracted"
+                            )
+                        else:
+                            print(
+                                f"[{timestamp}] AUXILIARY at {angle:.0f}° "
+                                f"(Score: {score:.3f} < {verifier.threshold}) ──► Suppressed"
+                            )
 
-                                print(
-                                    f"[{timestamp}] DOCTOR LOCKED at {angle:.0f}° "
-                                    f"(Score: {score:.3f} >= {verifier.threshold}) ──► Audio Flushed"
-                                )
-                            else:
-                                print(
-                                    f"[{timestamp}] AUXILIARY STAFF at {angle:.0f}° "
-                                    f"(Score: {score:.3f} < {verifier.threshold}) ──► Suppressed"
-                                )
-
-                            # Evict from candidates so ECAPA does NOT run again on this track
-                            candidate_buffers.pop(angle, None)
-
-                    elif angle == doctor_angle:
-                        # Confirmed Doctor Stream: zero ECAPA overhead
-                        doctor_recording.append(stream.copy())
+                        # reset buffer to collect the next 1.5s block
+                        candidate_buffers[angle] = []
 
                 veri_ms = (time.perf_counter() - t_veri) * 1000 if ecapa_checked else 0.0
+                doc_status = f"{last_doc_angle:.0f}°" if last_doc_angle is not None else "Listening..."
+
 
                 # Live Pipeline Telemetry
                 total_latency_ms = vad_ms + loc_ms + beam_ms + veri_ms
-                doc_status = f"{doctor_angle:.0f}°" if doctor_angle is not None else "Searching..."
                 angles_str = ", ".join(f"{a:.0f}°" for a in target_angles_to_steer)
 
                 print(
