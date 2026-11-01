@@ -63,11 +63,11 @@ def chunk_to_mono(chunk: np.ndarray) -> np.ndarray:
 
 
 class UtteranceStream:
-    def __init__(self, engine: VoskEngine, max_utterance_s: float = 15.0, gap_tolerance_s: float = 0.25) -> None:
+    def __init__(self, engine: VoskEngine, max_utterance_s: float = 15.0, gap_tolerance_s: float = 1.5) -> None:
         """engine: the Vosk engine (bench_configs.PRODUCTION_CONFIG), 16 kHz input.
         max_utterance_s: a log_event with a comment takes ~10 s.
-        gap_tolerance_s: timestamp jitter allowed between two chunks; a real
-        gap is at least one missing 0.5 s chunk."""
+        gap_tolerance_s: timestamp jitter / silence gap allowed between chunks before
+        splitting into a new utterance (default: 1.5s)."""
         self.engine = engine
         self.max_utterance_s = max_utterance_s
         self.gap_tolerance_s = gap_tolerance_s

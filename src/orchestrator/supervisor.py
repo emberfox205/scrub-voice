@@ -86,6 +86,7 @@ class Supervisor:
         denoiser_type: str = "duofilter",
         dsp_spatial: bool = True,
         nlu_threads: int = 2,
+        silence_hangover_sec: float = 1.5,
     ) -> None:
         self.wav_path = wav_path
         self.device = device
@@ -98,6 +99,7 @@ class Supervisor:
         self.denoiser_type = denoiser_type
         self.dsp_spatial = dsp_spatial
         self.nlu_threads = nlu_threads
+        self.silence_hangover_sec = silence_hangover_sec
 
         self._running = False
         self._shutting_down = False
@@ -143,6 +145,8 @@ class Supervisor:
         asr_cmd = [
             py_exec,
             str(REPO_ROOT / "src" / "asr" / "scripts" / "run_asr.py"),
+            "--gap-tolerance",
+            str(self.silence_hangover_sec),
             "--end-timeout",
             "2.5",
         ]
@@ -153,6 +157,8 @@ class Supervisor:
             dsp_cmd = [
                 py_exec,
                 str(REPO_ROOT / "src" / "dsp" / "run_dsp.py"),
+                "--silence-hangover-sec",
+                str(self.silence_hangover_sec),
             ]
             if self.wav_path:
                 dsp_cmd.extend(["--wav", str(self.wav_path)])
@@ -389,6 +395,12 @@ def main():
     parser.add_argument("--no-denoise", action="store_true", help="Bypass denoiser in DSP")
     parser.add_argument("--no-spatial", action="store_true", help="Bypass spatial localizer/beamformer in DSP")
     parser.add_argument("--nlu-threads", type=int, default=2, help="PyTorch CPU threads for NLU (default: 2)")
+    parser.add_argument(
+        "--silence-hangover-sec",
+        type=float,
+        default=1.5,
+        help="Sustained silence duration (seconds) before DSP signals utterance end to ASR (default: 1.5s)",
+    )
     parser.add_argument("--single-pass", action="store_true", help="Stop pipeline after one pass of the WAV file")
     parser.add_argument("--max-restarts", type=int, default=5, help="Maximum auto-restarts per service")
     args = parser.parse_args()
@@ -405,6 +417,7 @@ def main():
         denoiser_type=args.denoiser_type,
         dsp_spatial=not args.no_spatial,
         nlu_threads=args.nlu_threads,
+        silence_hangover_sec=args.silence_hangover_sec,
     )
 
     def handle_sig(sig, frame):

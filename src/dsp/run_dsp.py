@@ -83,6 +83,7 @@ def run_dsp_service(
     realtime: bool = True,
     loop: bool = False,
     atten_lim_db: Optional[float] = 20.0,
+    silence_hangover_sec: float = 1.5,
 ) -> None:
     """Run the DSP streaming loop."""
     logger.info("Initializing DSP subsystems...")
@@ -150,7 +151,7 @@ def run_dsp_service(
 
     in_speech = False
     silence_chunks = 0
-    HANGOVER_SILENCE_CHUNKS = 2  # Require 2 consecutive silence chunks (~1.0s) before ending utterance
+    hangover_silence_chunks = max(1, int(round(silence_hangover_sec / CHUNK_DURATION)))
     chunk_index = 0
 
     try:
@@ -162,7 +163,6 @@ def run_dsp_service(
                     logger.info("Stream source reached EOF.")
                     if in_speech:
                         push.send_multipart([orjson.dumps({"type": "end"})])
-                        save_current_utterance()
                         in_speech = False
                     break
 
@@ -174,20 +174,27 @@ def run_dsp_service(
                 is_speech = vad.is_speech_active(chunk)
                 t_vad = (time.perf_counter() - t0) * 1000
 
+                vad_status_desc = "SPEECH"
                 if not is_speech:
                     if in_speech:
                         silence_chunks += 1
-                        if silence_chunks >= HANGOVER_SILENCE_CHUNKS:
+                        if silence_chunks > hangover_silence_chunks:
                             # Speech genuinely ended after sustained silence: send 'end' message to trigger final ASR transcription
                             push.send_multipart([orjson.dumps({"type": "end"})])
-                            save_current_utterance()
                             in_speech = False
                             silence_chunks = 0
-                            logger.info(f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR")
-                    continue
-
-                in_speech = True
-                silence_chunks = 0
+                            logger.info(
+                                f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR (silence >= {silence_hangover_sec:.1f}s)"
+                            )
+                            continue
+                        else:
+                            # Within silence hangover window: keep utterance alive and stream audio chunk
+                            vad_status_desc = f"SILENCE-HANGOVER ({silence_chunks}/{hangover_silence_chunks})"
+                    else:
+                        continue
+                else:
+                    in_speech = True
+                    silence_chunks = 0
 
                 # Gate 2 & Mod 3: Spatial Localizer & DAS Beamformer
                 mono_audio = None
@@ -220,7 +227,7 @@ def run_dsp_service(
                 header = {"type": "chunk", "capture_time": capture_time}
                 push.send_multipart([orjson.dumps(header), clean_chunk.astype(np.float32).tobytes()])
                 logger.info(
-                    f"Chunk #{chunk_index:04d} | VAD: SPEECH ({t_vad:.1f}ms) | Angle: {angle_desc} | Denoise: {chunk_db:+.1f}dB -> Pushed 8000 samples to ASR"
+                    f"Chunk #{chunk_index:04d} | VAD: {vad_status_desc} ({t_vad:.1f}ms) | Angle: {angle_desc} | Denoise: {chunk_db:+.1f}dB -> Pushed 8000 samples to ASR"
                 )
 
     except KeyboardInterrupt:
@@ -258,6 +265,12 @@ def main() -> None:
         default=20.0,
         help="Attenuation limit in dB (default: 20.0 to preserve natural acoustic floor for ASR, or >= 100 for full suppression)",
     )
+    parser.add_argument(
+        "--silence-hangover-sec",
+        type=float,
+        default=1.5,
+        help="Sustained silence duration (seconds) before DSP signals utterance end to ASR (default: 1.5s)",
+    )
     parser.set_defaults(denoise=True, spatial=True, realtime=True)
 
     args = parser.parse_args()
@@ -272,6 +285,7 @@ def main() -> None:
         realtime=args.realtime,
         loop=args.loop,
         atten_lim_db=args.atten_lim_db,
+        silence_hangover_sec=args.silence_hangover_sec,
     )
 
 

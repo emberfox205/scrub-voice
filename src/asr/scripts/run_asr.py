@@ -82,11 +82,15 @@ def simulate(stream: UtteranceStream, wav_paths: list[Path], push=None) -> None:
     clock = time.time()  # simulated capture time of the first chunk
 
     def finish(result, started: float) -> None:
-        if result is not None:
+        if result is not None and result.text.strip():
             log_result(result, time.perf_counter() - started)
             print(result.to_json(), flush=True)
             if push is not None:
                 push.send(result.to_json().encode("utf-8"))
+
+    hangover_chunks = 3  # 1.5s hangover matching DSP
+    in_speech = False
+    silence_chunks = 0
 
     for i in range(0, len(audio) - chunk_len + 1, chunk_len):
         if push is not None:  # real time: wait until this chunk would be recorded completely
@@ -95,10 +99,20 @@ def simulate(stream: UtteranceStream, wav_paths: list[Path], push=None) -> None:
         has_speech = vad.is_speech_active(chunk)
         started = time.perf_counter()
         if has_speech:
+            in_speech = True
+            silence_chunks = 0
             for result in stream.feed(chunk, clock + i / TARGET_SR):
                 finish(result, started)
         else:
-            finish(stream.end_utterance(), started)  # the DSP stops sending: speech is over
+            if in_speech:
+                silence_chunks += 1
+                if silence_chunks <= hangover_chunks:
+                    for result in stream.feed(chunk, clock + i / TARGET_SR):
+                        finish(result, started)
+                else:
+                    finish(stream.end_utterance("dsp_end"), started)
+                    in_speech = False
+                    silence_chunks = 0
     started = time.perf_counter()
     finish(stream.end_utterance(), started)
 
@@ -120,7 +134,7 @@ def serve(stream: UtteranceStream, audio_addr: str, asr_addr: str, end_timeout_s
     logger.info(f"Listening for DSP chunks on {audio_addr}, sending results to {asr_addr}")
 
     def send(result, started: float) -> None:
-        if result is not None:
+        if result is not None and result.text.strip():
             log_result(result, time.perf_counter() - started)
             push.send(result.to_json().encode("utf-8"))
 
@@ -161,10 +175,12 @@ def main() -> None:
     parser.add_argument("--asr-addr", default=DEFAULT_ASR_ADDR)
     parser.add_argument("--end-timeout", type=float, default=2.5,
                         help="Seconds without a chunk after which an utterance counts as finished")
+    parser.add_argument("--gap-tolerance", type=float, default=1.5,
+                        help="Maximum timestamp gap (seconds) between chunks before starting a new utterance (default: 1.5s)")
     args = parser.parse_args()
 
     started = time.perf_counter()
-    stream = UtteranceStream(CONFIGS[args.config]())
+    stream = UtteranceStream(CONFIGS[args.config](), gap_tolerance_s=args.gap_tolerance)
     logger.info(f"Engine '{args.config}' loaded in {time.perf_counter() - started:.1f} s")
     if args.wav:
         push = open_push(args.asr_addr) if args.send else None
