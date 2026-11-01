@@ -106,6 +106,7 @@ class DuoFilterDenoiser:
         threads: int = 2,
         lookback_samples: int = 2048,
         atten_lim_db: Optional[float] = 20.0,
+        split_band_hz: Optional[float] = 2500.0,
     ):
         if model_path is None:
             model_path = self.DEFAULT_ONNX_PATH
@@ -116,6 +117,25 @@ class DuoFilterDenoiser:
         self.win_length = win_length
         self.lookback_samples = lookback_samples
         self.atten_lim_db = atten_lim_db
+        self.split_band_hz = split_band_hz
+
+        # Precompute Split-Band Consonant Shield weights if enabled
+        n_bins = self.n_fft // 2 + 1
+        if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+            bin_hz = self.sample_rate / self.n_fft
+            split_bin = int(round(self.split_band_hz / bin_hz))
+            transition_bins = 8
+            half_trans = max(1, transition_bins // 2)
+            start_bin = max(0, split_bin - half_trans)
+            end_bin = min(n_bins, split_bin + half_trans)
+
+            weights = torch.ones(n_bins, dtype=torch.float32)
+            if start_bin < end_bin:
+                weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+            weights[end_bin:] = 0.0
+            self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, 1, n_bins)
+        else:
+            self.split_weights = None
 
         if not self.model_path.exists():
             raise FileNotFoundError(f"DuoFilter ONNX model not found at {self.model_path}")
@@ -247,6 +267,10 @@ class DuoFilterDenoiser:
             below_floor = (enh_mag < floor_mag).unsqueeze(1)
             floor_stft = min_gain * noisy_stft
             enhanced_stft = torch.where(below_floor, floor_stft, enhanced_stft)
+
+        # Split-Band Consonant Shield: Preserve raw/beamformed audio in high frequencies (> split_band_hz)
+        if self.split_weights is not None:
+            enhanced_stft = self.split_weights * enhanced_stft + (1.0 - self.split_weights) * noisy_stft
 
         # Optional Phase Preservation: Use magnitude from model + original noisy phase
         if phase_preservation:

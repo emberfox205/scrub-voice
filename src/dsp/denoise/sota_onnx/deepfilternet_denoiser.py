@@ -126,6 +126,7 @@ class DeepFilterDenoiser:
         df_bins: int = 96,
         threads: int = 1,
         atten_lim_db: float | None = 20.0,
+        split_band_hz: float | None = 2500.0,
     ):
         if model_path is None:
             onnx_sub = CURRENT_DIR / "onnx" / "deepfilternet.onnx"
@@ -138,6 +139,25 @@ class DeepFilterDenoiser:
         self.erb_bins = erb_bins
         self.df_bins = df_bins
         self.atten_lim_db = atten_lim_db
+        self.split_band_hz = split_band_hz
+
+        # Precompute Split-Band Consonant Shield weights if enabled
+        n_bins = self.n_fft // 2 + 1
+        if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+            bin_hz = self.sample_rate / self.n_fft
+            split_bin = int(round(self.split_band_hz / bin_hz))
+            transition_bins = 8
+            half_trans = max(1, transition_bins // 2)
+            start_bin = max(0, split_bin - half_trans)
+            end_bin = min(n_bins, split_bin + half_trans)
+
+            weights = torch.ones(n_bins, dtype=torch.float32)
+            if start_bin < end_bin:
+                weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+            weights[end_bin:] = 0.0
+            self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, n_bins)
+        else:
+            self.split_weights = None
 
         torch.set_num_threads(threads)
         options = ort.SessionOptions()
@@ -196,6 +216,12 @@ class DeepFilterDenoiser:
             df_order=5,
             lookahead=1,
         )
+
+        # Split-Band Consonant Shield: Preserve raw/beamformed audio in high frequencies (> split_band_hz)
+        if self.split_weights is not None:
+            raw_spec = input_spec.transpose(1, 2)
+            final_spec = self.split_weights * final_spec + (1.0 - self.split_weights) * raw_spec
+
         enh_wav = torch.istft(
             final_spec.transpose(1, 2),
             n_fft=self.n_fft,

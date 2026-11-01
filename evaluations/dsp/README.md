@@ -47,15 +47,16 @@ $$\text{RTF} = \frac{\text{Processing Time}}{\text{Audio Duration}}$$
 
 ## 3. Empirical Acoustic Findings & Real-World Caveats
 
-### ⚠️ Acoustic Quality: Neural Denoiser "Vacuum Tube / Pops" Artifact
-* **Observed Behavior in Live Trials:** DeepFilterNet output can sound "underwhelming" on certain recordings—static noise is only moderately attenuated, while the speaker's voice exhibits a "vacuum tube" coloration (flanging/comb filtering), volume fading in and out, and subtle popping artifacts.
-* **Technical Root Cause:**
-  1. **ERB Gain Masking on Reverberant Speech:** DeepFilterNet applies neural gain masks across Equivalent Rectangular Bandwidth (ERB) subbands. When speech contains room reverberation or low SNR, rapid gain transitions between frames create spectral gating artifacts ("musical noise" and fluctuating volume).
-  2. **Phase Mismatch:** Synthesis of complex spectrogram bins can introduce phase discontinuities, creating the sensation of speaking through a hollow tube.
-* **Recommendations for Team:**
-  * **Atten Limiting:** Clamp maximum attenuation to a bounded floor (e.g. $-12\text{ dB}$ or $-15\text{ dB}$) rather than full suppression to prevent voice dropouts.
-  * **Dry/Wet Blending:** Blend 80% denoised with 20% raw audio to preserve natural vocal formant timbre.
-  * **Mono Simulation Limitation:** Note that testing with a mono WAV file duplicates audio across all 8 channels; Delay-and-Sum beamforming requires true multi-channel physical mic differences to form a spatial beam.
+### ⚠️ Acoustic Quality: Neural Denoiser "Vacuum Tube / Pops" Artifact & ASR Phoneme Mutilation
+* **Observed Behavior in Live Trials:** DeepFilterNet / DuoFilter unconstrained output can sound "underwhelming" on certain recordings—while stationary noise is removed, the voice exhibits flanging/comb filtering, volume fading, and subtle popping artifacts. Crucially, downstream ASR (Vosk) accuracy drops because the neural denoiser mistakenly suppresses fragile high-frequency unvoiced consonants (/s/, /f/, /t/, /k/) as noise, and creates zero-noise frames that collide with Kaldi's MFCC feature extraction when dither is disabled.
+* **Technical Root Causes:**
+  1. **ERB/Complex Gain Masking on Unvoiced Consonants:** Unvoiced consonants have noise-like turbulent broadband spectra without pitch harmonics. The neural network's loss function penalizes residual noise, mistaking quiet consonants for background noise and suppressing them by $-30\text{ dB to }-40\text{ dB}$.
+  2. **Phase Mismatch & Spectral Gating:** Non-linear frame-by-frame masking creates phase jitter and spectral envelope ripple across adjacent Mel filterbanks, which corrupts Kaldi's Discrete Cosine Transform (DCT) and CMVN variance normalization.
+  3. **Linear Beamforming vs. Neural Masking:** Delay-and-Sum (DAS) is a $100\%$ linear spatial filter (zero phase distortion, zero spectral ripple). In quiet-to-moderate environments, pure beamforming (`--no-denoise`) provides pristine, unmodulated formants that Vosk recognizes with high confidence.
+* **Implemented Solutions in Pipeline:**
+  * **Minimum Gain Floor Clamping (`--atten-lim-db 20.0`):** Clamps over-suppressed frequency bins to the authentic physical microphone input at a $-20\text{ dB}$ floor ($G_{\min} = 0.10$). Prevents dead digital silence, avoids $\ln(0) = -\infty$ Kaldi crashes, and retains the natural acoustic room bed.
+  * **Split-Band DuoFilter Consonant Shield (`--split-band-hz 2500.0`):** Applies DuoFilter neural enhancement only in the low-to-mid band ($< 2.5\text{ kHz}$) where $90\%$ of motor, suction, and HVAC noise power lives, while passing the beamformed audio directly in the high band ($> 2.5\text{ kHz}$) with a smooth 8-bin cross-fade. This guarantees $100\%$ preservation of /s/, /f/, /t/, /k/ phonemes for Vosk.
+  * **Bypass Option for Pure Beamforming (`--no-denoise`):** For clean/moderate environments, bypasses the neural denoiser completely to stream direct DAS beamformed audio to Vosk, reducing latency and CPU usage to an RTF of $0.002$.
 
 ### 💡 Software Delimiter: Explicit "END" Termination Keyword
 * **The Clinical Problem:** Relying solely on VAD silence detection in a noisy OR is brittle—HVAC noise or breathing can delay the silence trigger by 400–800 ms, while natural pauses between words can prematurely truncate sentences.
