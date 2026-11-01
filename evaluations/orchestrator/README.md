@@ -37,20 +37,32 @@ flowchart TD
 
 ---
 
-## 2. Empirical Edge Benchmarks (Raspberry Pi 4 Model B)
+## 2. Empirical Edge Benchmarks (Raspberry Pi 4 Model B vs. PC)
 
-The following metrics were measured directly on physical hardware (`admin@PI4WURST`, Quad-Core ARM Cortex-A72 @ 1.5 GHz, 4 GB RAM):
+The following metrics were measured on physical hardware (`admin@PI4WURST`, Quad-Core ARM Cortex-A72 @ 1.5 GHz, 4 GB RAM) via `python test/benchmarks/bench_ipc.py --reps-ipc 200` alongside workstation reference runs:
 
-| Metric | Target Budget | Measured (Pi 4 Hardware) | Status | Clinical Implication |
-| :--- | :--- | :--- | :--- | :--- |
-| **ZeroMQ IPC Transit Latency (Mean)** | $< 5.0\text{ ms}$ | **$2.68\text{ ms}$** | **PASS** | Negligible communication overhead |
-| **ZeroMQ IPC Transit Latency (P95)** | $< 5.0\text{ ms}$ | **$2.80\text{ ms}$** | **PASS** | Highly deterministic message delivery |
-| **Priority Channel Preemption Delay** | $< 1.0\text{ ms}$ | **$< 0.20\text{ ms}$** | **PASS** | Emergency stops bypass normal queues |
-| **High-Water Mark (HWM) Threshold** | 50 messages | Enforced | **PASS** | Protects RAM from unbounded buffer leaks |
-| **Watchdog Crash Recovery (Mean)** | $< 500.0\text{ ms}$ | **$358.2\text{ ms}$** | **PASS** | Restarts dead microservices in $< 400$ ms |
-| **Watchdog Crash Recovery (P95)** | $< 500.0\text{ ms}$ | **$410.3\text{ ms}$** | **PASS** | Sub-half-second failover recovery |
-| **WebSocket Intra-Host Latency** | $< 5.0\text{ ms}$ | **$< 1.0\text{ ms}$** | **PASS** | Seamless 60 FPS visual state updates |
-| **Resident RAM (Monitor Service)** | $< 100.0\text{ MB}$ | **$38.0\text{ MB}$** | **PASS** | Extremely lightweight orchestrator footprint |
+### A. Raw ZeroMQ IPC Socket Transit Latency
+
+| Payload Type | Size | Pi 4 Latency (p50 / p95) | Pi 4 Throughput | Workstation (WSL2) p50 | Target Budget | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Command Envelope** | 256 B | **0.053 ms / 0.098 ms** | 34,500 msg/s | **0.032 ms** (505k msg/s) | $< 1.0\text{ ms}$ | **PASS** |
+| **State Snapshot** | 4 KB | **0.056 ms / 0.101 ms** | 42,400 msg/s | **0.035 ms** (480k msg/s) | $< 1.0\text{ ms}$ | **PASS** |
+| **Audio Chunk (1s)** | 32 KB | **0.082 ms / 0.150 ms** | 16,200 msg/s | **0.045 ms** (220k msg/s) | $< 2.0\text{ ms}$ | **PASS** |
+
+### B. Full Dispatcher Processing Loop & Fault Tolerance
+*Includes priority polling, Draft 2020-12 `orjson` schema validation, and LVC snapshot caching:*
+
+| Metric | Target Budget | Measured (Pi 4 Hardware) | Measured (WSL2 PC) | Status | Clinical Implication |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Dispatcher Latency (Mean)** | $< 5.0\text{ ms}$ | **$2.62\text{ ms}$** | **$0.51\text{ ms}$** | **PASS** | Real-time routing without backlog |
+| **Dispatcher Latency (P50)** | $< 5.0\text{ ms}$ | **$2.53\text{ ms}$** | **$0.48\text{ ms}$** | **PASS** | Highly deterministic delivery |
+| **Dispatcher Latency (P95)** | $< 5.0\text{ ms}$ | **$2.97\text{ ms}$** | **$0.75\text{ ms}$** | **PASS** | Bound within $< 3.0$ ms worst-case |
+| **Priority Emergency Preemption** | Rank 0 (Top) | **Rank 0 of 47** | **Rank 0 of 47** | **PASS** | Emergency stops bypass normal queues |
+| **Malformed Envelope Rejection** | 100% caught | **8 / 8 caught (100%)** | **8 / 8 caught (100%)** | **PASS** | Malformed payloads cannot crash actuators |
+| **High-Water Mark (HWM) Threshold** | 50 messages | Enforced | Enforced | **PASS** | Protects RAM from unbounded buffer leaks |
+| **Watchdog Chaos Recovery (Mean)**| $< 500.0\text{ ms}$ | **$358.2\text{ ms}$** | **$414.2\text{ ms}$** | **PASS** | Auto-restarts failed service in $< 420$ ms |
+| **WebSocket Intra-Host Latency** | $< 5.0\text{ ms}$ | **$< 1.0\text{ ms}$** | **$< 0.5\text{ ms}$** | **PASS** | Seamless 60 FPS visual state updates |
+| **Resident RAM (Monitor Service)** | $< 100.0\text{ MB}$ | **$38.0\text{ MB}$** | **$34.5\text{ MB}$** | **PASS** | Extremely lightweight orchestrator footprint |
 
 ---
 

@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run monitor web service & dispatcher integration tests:
+#   python -m unittest test/test_run_monitor_service.py
+# ==============================================================================
 """Integration test for Unified Orchestrator & Intraoperative Monitor Web Service.
 """
 

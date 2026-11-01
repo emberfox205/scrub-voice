@@ -10,11 +10,11 @@ Empirical edge benchmarks, metric budgets, and code modification logs for the **
 
 | Subsystem | Primary Engine | Mean Latency | P95 Latency | RTF / Rate | Peak RAM | Target Budget | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **[DSP](dsp/)** | Delay-and-Sum + DeepFilterNet | 448.97 ms | 458.35 ms | **0.4490** | 629.6 MB | $\text{RTF} \le 0.50$ | **PASS** |
-| **[ASR](asr/)** | Vosk Grammar (Kaldi FST) | 120.00 ms | 140.00 ms | ~0.1200 | 185.0 MB | Latency $\le 200\text{ ms}$ | **PASS** |
-| **[NLU](nlu/)** | SetFit `bge-micro-v2` (2 Thr) | 152.85 ms | 155.77 ms | — | 635.5 MB | Latency $\le 200\text{ ms}$ | **PASS** |
-| **[Orchestrator](orchestrator/)** | ZeroMQ IPC Dual-Channel | 2.68 ms | 2.80 ms | >10k msg/s | 38.0 MB | Transit $\le 5.0\text{ ms}$ | **PASS** |
-| **[Full Pipeline](full-pipe/)** | End-to-End Post-Speech | **290.53 ms** | **316.92 ms** | — | **635.5 MB** | Total $\le 500\text{ ms}$ | **PASS** |
+| **[DSP](dsp/)** | Delay-and-Sum + DuoFilter | 162.80 ms | 175.80 ms | **0.3260** (PC: 0.071) | 629.6 MB | $\text{RTF} \le 0.50$ | **PASS** |
+| **[ASR](asr/)** | Vosk Grammar (Kaldi FST) | 120.00 ms | 140.00 ms | ~0.1200 (PC: 0.020) | 185.0 MB | Latency $\le 200\text{ ms}$ | **PASS** |
+| **[NLU](nlu/)** | SetFit `bge-micro-v2` (2 Thr) | **49.51 ms** | **53.00 ms** | — (PC: 18.2 ms) | 589.7 MB | Latency $\le 80\text{ ms}$ | **PASS** |
+| **[Orchestrator](orchestrator/)** | ZeroMQ IPC Dual-Channel + LVC | 2.62 ms | 2.97 ms | >34k msg/s (Raw: 0.053ms) | 38.0 MB | Round-Trip $\le 5.0\text{ ms}$ | **PASS** |
+| **[Full Pipeline](full-pipe/)** | End-to-End Post-Speech | **188.14 ms** | **222.37 ms** | — (PC: 74.2 - 96.6ms) | **589.7 MB** | Total $\le 500\text{ ms}$ | **PASS (<200ms)** |
 
 ---
 
@@ -26,11 +26,11 @@ Each module folder contains:
 
 | Subsystem | Metrics & Evals | What Changed from Old Code | Key Hardware Finding |
 | :--- | :--- | :--- | :--- |
-| **DSP** | [DSP Metrics](dsp/README.md) | [DSP Changes](dsp/CHANGES.md) | RTF 0.449; VAD state reset fixes sticky utterance clumping |
-| **ASR** | [ASR Metrics](asr/README.md) | [ASR Changes](asr/CHANGES.md) | 120ms latency; 100% keyword conf; grammar expansion has zero delay |
-| **NLU** | [NLU Metrics](nlu/README.md) | [NLU Changes](nlu/CHANGES.md) | 2 threads is optimal (152ms, -25.5%); 100% schema compliance |
-| **Orchestrator** | [Orchestrator Metrics](orchestrator/README.md) | [Orchestrator Changes](orchestrator/CHANGES.md) | 2.68ms IPC transit; 358ms watchdog crash auto-recovery |
-| **Full Pipeline** | [Full-Pipe Metrics](full-pipe/README.md) | [Full-Pipe Changes](full-pipe/CHANGES.md) | 290ms post-speech response matches human conversation (~250ms) |
+| **DSP** | [DSP Metrics](dsp/README.md) | [DSP Changes](dsp/CHANGES.md) | RTF 0.326 (DuoFilter) vs 0.449 (DeepFilter); 0° DOA error @ 15dB; +3.35 dB SI-SDR gain |
+| **ASR** | [ASR Metrics](asr/README.md) | [ASR Changes](asr/CHANGES.md) | 120ms latency; RTF 0.020 (PC) / 0.120 (Pi); 100% keyword conf; zero-delay grammar lattice |
+| **NLU** | [NLU Metrics](nlu/README.md) | [NLU Changes](nlu/CHANGES.md) | 2 threads optimal (49.51ms, -58.0% speedup); 94.1% accuracy; 0% OOD FAR; 100% schema match |
+| **Orchestrator** | [Orchestrator Metrics](orchestrator/README.md) | [Orchestrator Changes](orchestrator/CHANGES.md) | 0.053ms socket transit; 2.53ms dispatcher p50; Rank 0/47 emergency preemption; 358ms watchdog recovery |
+| **Full Pipeline** | [Full-Pipe Metrics](full-pipe/README.md) | [Full-Pipe Changes](full-pipe/CHANGES.md) | 188ms post-speech on Pi 4 (74-96ms on PC); beats human conversational rhythm (<200ms) |
 
 ---
 

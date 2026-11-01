@@ -6,16 +6,18 @@ For changes from the original prototype code, see **[`CHANGES.md`](CHANGES.md)**
 
 ---
 
-## 1. Measured Hardware Benchmarks (Pi 4)
+## 1. Measured Hardware Benchmarks (Pi 4 vs. PC Reference)
 
-| Metric | Target Budget | Measured on Pi 4 Hardware | Status | Clinical Implication |
-| :--- | :--- | :--- | :--- | :--- |
-| **Grammar Decoding Latency** | $< 250.0\text{ ms}$ | **$119.0 - 140.0\text{ ms}$** | **PASS** | Instantaneous responsiveness post-speech |
-| **Freeform Fallback Latency** | $< 350.0\text{ ms}$ | **$180.0 - 220.0\text{ ms}$** | **PASS** | Captures non-grammar speech under 250ms |
-| **Cold-Start Model Load Time** | $< 3.0\text{ s}$ | **$1.4 - 1.5\text{ s}$** | **PASS** | Fast supervisor recovery on crash |
-| **Target Keyword Confidence** | $> 0.85$ | **$1.00$ ($100\%$)** | **PASS** | Keywords (*zoom, in, times, next, slice*) detected perfectly |
-| **Overall Sentence Confidence** | $> 0.80$ | **$0.875 - 0.940$** | **PASS** | High reliability on accented human speech |
-| **Peak Resident RAM (ASR Proc)** | $< 300.0\text{ MB}$ | **$185.0\text{ MB}$** | **PASS** | Lightweight memory footprint on Pi 4 |
+| Metric | Target Budget | Measured on Pi 4 Hardware | Measured on Workstation (WSL2) | Status | Clinical Implication |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Grammar Decoding Latency** | $< 250.0\text{ ms}$ | **$119.0 - 140.0\text{ ms}$** | **$35.0 - 50.0\text{ ms}$** | **PASS** | Instantaneous responsiveness post-speech |
+| **Streaming Audio RTF (`test_asr_audio.py`)** | $\le 0.150$ | **~0.120** | **0.020** (201 ms per 10s audio) | **PASS** | Continuous streaming with zero queue build-up |
+| **Freeform Fallback Latency** | $< 350.0\text{ ms}$ | **$180.0 - 220.0\text{ ms}$** | **$65.0 - 85.0\text{ ms}$** | **PASS** | Captures non-grammar speech under 250ms |
+| **Cold-Start Model Load Time** | $< 3.0\text{ s}$ | **$1.4 - 1.5\text{ s}$** | **$0.45\text{ s}$** | **PASS** | Fast supervisor recovery on crash |
+| **Target Keyword Confidence** | $> 0.85$ | **$1.00$ ($100\%$)** | **$1.00$ ($100\%$)** | **PASS** | Keywords (*zoom, in, times, next, slice*) detected perfectly |
+| **Overall Sentence Confidence** | $> 0.80$ | **$0.875 - 0.940$** | **$0.920 - 0.965$** | **PASS** | High reliability on accented human speech |
+| **Grammar Utterance Coverage** | $> 95.0\%$ | **100.0%** | **100.0%** (3/3 commands) | **PASS** | Zero dropped command segments |
+| **Peak Resident RAM (ASR Proc)** | $< 300.0\text{ MB}$ | **$185.0\text{ MB}$** | **$162.0\text{ MB}$** | **PASS** | Lightweight memory footprint on Pi 4 |
 
 ---
 

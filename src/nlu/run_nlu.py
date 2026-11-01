@@ -171,15 +171,6 @@ class NLUService:
             slots_str,
         )
 
-        # Save to debug ledger
-        try:
-            nlu_log = REPO_ROOT / "results" / "nlu_envelopes.jsonl"
-            nlu_log.parent.mkdir(parents=True, exist_ok=True)
-            with open(nlu_log, "a", encoding="utf-8") as f:
-                f.write(orjson.dumps(envelope).decode("utf-8") + "\n")
-        except Exception:
-            pass
-
         return envelope
 
     def run(self) -> None:
