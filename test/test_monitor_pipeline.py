@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run full monitor IPC & WebSocket pipeline integration tests:
+#   python -m unittest test/test_monitor_pipeline.py
+#
+#   # 2. Verbose test output:
+#   python -m unittest -v test/test_monitor_pipeline.py
+# ==============================================================================
 """
 End-to-end integration tests for Scrub-Voice Orchestrator to Monitor pipeline.
 Verifies:

@@ -31,6 +31,9 @@
   "idioms": {
     "\\btwice\\b": "2x",
     "\\bthrice\\b": "3x",
-    "\\bhalf\\s*(?:a\\s*)?(?:times|x)?\\b": "0.5x"
+    "\\bhalf\\s*(?:a\\s*)?(?:times|x)?\\b": "0.5x",
+    "\\bpull\\s+up\\b": "open",
+    "\\bmake\\s+(?:it|view|display|screen|image)\\s+bigger\\b": "zoom in",
+    "\\bmake\\s+(?:it|view|display|screen|image)\\s+smaller\\b": "zoom out"
   }
 }

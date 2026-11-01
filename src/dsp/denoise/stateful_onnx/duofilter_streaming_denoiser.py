@@ -31,6 +31,8 @@ class DuoFilterStreamingDenoiser:
         win_length: int = 512,
         chunk_samples: int = 8000,  # 0.5s @ 16 kHz
         threads: int = 1,
+        atten_lim_db: Optional[float] = 20.0,
+        split_band_hz: Optional[float] = 2500.0,
     ):
         if model_path is None:
             self.model_path = DEFAULT_MODEL_PATH
@@ -48,6 +50,26 @@ class DuoFilterStreamingDenoiser:
         self.hop_length = hop_length
         self.win_length = win_length
         self.chunk_samples = chunk_samples
+        self.atten_lim_db = atten_lim_db
+        self.split_band_hz = split_band_hz
+
+        # Precompute Split-Band Consonant Shield weights if enabled
+        n_bins = self.n_fft // 2 + 1
+        if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+            bin_hz = self.sample_rate / self.n_fft
+            split_bin = int(round(self.split_band_hz / bin_hz))
+            transition_bins = 8
+            half_trans = max(1, transition_bins // 2)
+            start_bin = max(0, split_bin - half_trans)
+            end_bin = min(n_bins, split_bin + half_trans)
+
+            weights = torch.ones(n_bins, dtype=torch.float32)
+            if start_bin < end_bin:
+                weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+            weights[end_bin:] = 0.0
+            self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, 1, n_bins)
+        else:
+            self.split_weights = None
 
         # Square-root Hann window satisfies COLA condition with 50% overlap
         self.window = torch.hann_window(self.win_length).pow(0.5)
@@ -125,10 +147,34 @@ class DuoFilterStreamingDenoiser:
         self.states["glu_cache"] = outputs[5]
         self.states["gru_state"] = outputs[6]
 
+        enh_stft_t = torch.from_numpy(enh_stft)
+
+        # Minimum Gain Floor Clamping: clamp over-suppressed bins to authentic input floor
+        if self.atten_lim_db is not None and self.atten_lim_db < 100.0:
+            min_gain = 10.0 ** (-self.atten_lim_db / 20.0)
+
+            # Magnitudes: [1, T, 257]
+            noisy_mag = torch.sqrt(stft[:, 0] ** 2 + stft[:, 1] ** 2 + 1e-12)
+            enh_mag = torch.sqrt(enh_stft_t[:, 0] ** 2 + enh_stft_t[:, 1] ** 2 + 1e-12)
+            floor_mag = min_gain * noisy_mag
+
+            # Identify bins where denoiser suppressed deeper than the allowed limit
+            below_floor = (enh_mag < floor_mag).unsqueeze(1)  # [1, 1, T, 257]
+            floor_stft = min_gain * stft
+
+            # Replace over-suppressed bins with the genuine physical input floor
+            # preserving authentic room acoustics and natural phase for ASR
+            enh_stft_t = torch.where(below_floor, floor_stft, enh_stft_t)
+
+        # Split-Band Consonant Shield: Preserve beamformed audio in high frequencies (> split_band_hz)
+        # to ensure unvoiced consonants (/s/, /f/, /t/, /k/) are completely protected for ASR
+        if self.split_weights is not None:
+            enh_stft_t = self.split_weights * enh_stft_t + (1.0 - self.split_weights) * stft
+
         # iSTFT synthesis
         enh_complex = torch.complex(
-            torch.from_numpy(enh_stft[:, 0, :, :]),
-            torch.from_numpy(enh_stft[:, 1, :, :]),
+            enh_stft_t[:, 0, :, :],
+            enh_stft_t[:, 1, :, :],
         ).transpose(-1, -2)  # [1, 257, T=32]
 
         enh_wav = torch.istft(
@@ -217,9 +263,25 @@ if __name__ == "__main__":
         default=str(DEFAULT_MODEL_PATH),
         help="Path to duofilter_stateful.onnx",
     )
+    parser.add_argument(
+        "--atten-lim-db",
+        type=float,
+        default=20.0,
+        help="Attenuation limit in dB (e.g. 20.0 to preserve natural floor for ASR, or >= 100 for full suppression)",
+    )
+    parser.add_argument(
+        "--split-band-hz",
+        type=float,
+        default=2500.0,
+        help="Split-band frequency in Hz (default: 2500.0 to shield consonants for ASR, or 0 / >= 8000 to disable)",
+    )
     args = parser.parse_args()
 
-    denoiser = DuoFilterStreamingDenoiser(model_path=args.model)
+    denoiser = DuoFilterStreamingDenoiser(
+        model_path=args.model,
+        atten_lim_db=args.atten_lim_db,
+        split_band_hz=args.split_band_hz,
+    )
     out_file, rtf = denoiser.enhance_file(args.input, args.output)
     print(f"[0.5s Chunk DuoFilter] Enhanced audio saved to: {out_file}")
     print(f"[0.5s Chunk DuoFilter] Real-Time Factor (RTF): {rtf:.4f}")
