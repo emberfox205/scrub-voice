@@ -55,7 +55,7 @@ def initialize_system():
     print("   ✓ DAS Beamformer ready (center-padding COLA active).")
 
     print("[4/4] Warming up ECAPA-TDNN Speaker Verifier (Gate 4)...")
-    verifier = SpeakerVerifier(sample_rate=SAMPLE_RATE, similarity_threshold=0.65)
+    verifier = SpeakerVerifier(sample_rate=SAMPLE_RATE, similarity_threshold=0.50)
     dummy_mono=np.zeros(CHUNK_SAMPLES, dtype=np.float32)
     _ = verifier.extract_embedding(dummy_mono)
     print("   ✓ Speaker Verifier ready (ONNX CPU session warm).")
