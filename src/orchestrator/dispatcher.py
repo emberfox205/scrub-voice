@@ -24,7 +24,18 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import jsonschema
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import zmq
 
 # Dynamic path resolution according to AGENTS.md

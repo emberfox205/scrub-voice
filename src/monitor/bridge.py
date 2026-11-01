@@ -15,7 +15,18 @@ import time
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional
 
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import zmq
 
 from src.monitor.handlers import handle_command

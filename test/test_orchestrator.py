@@ -18,7 +18,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import zmq
 from src.orchestrator.dispatcher import CommandDispatcher
 

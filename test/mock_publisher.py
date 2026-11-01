@@ -23,7 +23,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import jsonschema
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import zmq
 
 # Dynamic path resolution according to AGENTS.md
@@ -321,6 +332,9 @@ PRESETS: Dict[str, List[Dict[str, Any]]] = {
     ],
 }
 
+# Alias surgical_flow to routine for convenience
+PRESETS["surgical_flow"] = PRESETS["routine"]
+
 
 class MockCommandPublisher:
     """ZeroMQ PUSH publisher that sends mock surgical command presets."""
@@ -423,47 +437,44 @@ class MockCommandPublisher:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Scrub-Voice Mock Command Publisher")
+    parser = argparse.ArgumentParser(
+        description="Scrub-Voice Mock Command Publisher (Runs preset test sequences)"
+    )
     parser.add_argument(
-        "--preset",
+        "preset",
+        nargs="?",
         choices=list(PRESETS.keys()) + ["interactive"],
         default="routine",
-        help="Command preset sequence to send",
+        help="Preset sequence to send (default: routine). Options: " + ", ".join(PRESETS.keys()) + ", interactive",
     )
     parser.add_argument(
+        "--preset",
+        dest="preset_opt",
+        choices=list(PRESETS.keys()) + ["interactive"],
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--delay",
         "--interval",
         type=float,
-        default=0.8,
-        help="Delay in seconds between commands in a preset",
-    )
-    parser.add_argument(
-        "--loop",
-        action="store_true",
-        help="Continuously loop the preset until Ctrl+C",
-    )
-    parser.add_argument(
-        "--addr",
-        default=DEFAULT_NLU_ADDR,
-        help="ZeroMQ normal NLU socket address to push to",
-    )
-    parser.add_argument(
-        "--priority-addr",
-        default=DEFAULT_NLU_PRIORITY_ADDR,
-        help="ZeroMQ priority NLU socket address to push to",
+        default=1.0,
+        dest="delay",
+        help="Delay in seconds between commands in a preset (default: 1.0)",
     )
     args = parser.parse_args()
 
-    pub = MockCommandPublisher(nlu_addr=args.addr, nlu_priority_addr=args.priority_addr)
-
+    selected_preset = args.preset_opt if args.preset_opt else args.preset
+    pub = MockCommandPublisher()
 
     try:
-        if args.preset == "interactive":
+        if selected_preset == "interactive":
             print("\n=======================================================")
-            print("  Scrub-Voice Interactive Mock Publisher Console")
+            print("  Scrub-Voice Mock Command Publisher Console")
             print("=======================================================")
             print("  Available Presets:")
             for idx, p in enumerate(PRESETS.keys(), 1):
-                print(f"    {idx}. {p:<12} ({len(PRESETS[p])} commands)")
+                print(f"    {idx}. {p:<14} ({len(PRESETS[p])} commands)")
             print("    0. Exit")
             print("=======================================================\n")
 
@@ -483,14 +494,10 @@ def main():
                     print(f"Unknown preset '{choice}'. Try again.")
                     continue
 
-                pub.send_preset(selected, interval_sec=args.interval)
+                pub.send_preset(selected, interval_sec=args.delay)
                 print()
         else:
-            while True:
-                pub.send_preset(args.preset, interval_sec=args.interval)
-                if not args.loop:
-                    break
-                time.sleep(1.0)
+            pub.send_preset(selected_preset, interval_sec=args.delay)
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")
     finally:

@@ -15,7 +15,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
