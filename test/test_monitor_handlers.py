@@ -23,7 +23,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import jsonschema
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json as orjson
 
 from src.monitor.state import MonitorState
 from src.monitor.handlers import handle_command, HANDLERS
@@ -200,30 +203,49 @@ class TestMonitorHandlers(unittest.TestCase):
         self.assertEqual(state.zoom_factor, 1.0)
 
     def test_navigate_slice_direct_and_relative(self):
-        """navigate_slice handles direct index, relative NEXT/PREVIOUS, and minimum clamping to 1."""
-        # Direct navigation
-        state = handle_command(self.state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": 45}})
-        self.assertEqual(state.current_slice, 45)
+        """navigate_slice handles direct index, relative NEXT/PREVIOUS, and clamping between 1 and total_slices (16)."""
+        # Direct navigation within bounds (e.g. slice 12 of 16)
+        state = handle_command(self.state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": 12}})
+        self.assertEqual(state.current_slice, 12)
 
         # Clamping direct negative index to 1
         state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": -10}})
         self.assertEqual(state.current_slice, 1)
 
-        # Relative navigation: NEXT + 10 -> 11
-        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "NEXT", "step_count": 10}})
-        self.assertEqual(state.current_slice, 11)
+        # Clamping direct out-of-bounds upper index to total_slices (16)
+        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": 500}})
+        self.assertEqual(state.current_slice, 16)
 
-        # Relative navigation: PREVIOUS - 4 -> 7
-        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "PREVIOUS", "step_count": 4}})
-        self.assertEqual(state.current_slice, 7)
+        # Reset back to 1
+        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": 1}})
+        self.assertEqual(state.current_slice, 1)
+
+        # Relative navigation: NEXT + 5 -> 6
+        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "NEXT", "step_count": 5}})
+        self.assertEqual(state.current_slice, 6)
+
+        # Relative navigation: PREVIOUS - 2 -> 4
+        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "PREVIOUS", "step_count": 2}})
+        self.assertEqual(state.current_slice, 4)
 
         # Relative overshoot clamps to 1
         state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "PREVIOUS", "step_count": 50}})
         self.assertEqual(state.current_slice, 1)
 
+        # Relative overshoot NEXT clamps to total_slices (16)
+        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "NEXT", "step_count": 200}})
+        self.assertEqual(state.current_slice, 16)
+
         # Fallback when slice_index is None
+        state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": 1}})
         state = handle_command(state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": None, "direction": "NEXT", "step_count": 5}})
         self.assertEqual(state.current_slice, 6)
+
+        # Planar modality (X-ray) guards slice navigation to single frame (1)
+        xray_state = handle_command(self.state, {"intent": "open_scan", "status": "EXECUTE", "slots": {"scan_type": "xray"}})
+        self.assertEqual(xray_state.total_slices, 1)
+        xray_nav = handle_command(xray_state, {"intent": "navigate_slice", "status": "EXECUTE", "slots": {"slice_index": 15}})
+        self.assertEqual(xray_nav.current_slice, 1)
 
     # --- Event Handlers ---
 
@@ -260,39 +282,41 @@ class TestMonitorHandlers(unittest.TestCase):
     # --- Emergency Handlers ---
 
     def test_emergency_halt_and_clear(self):
-        """halt_emergency engages brake interlock; clear_emergency initiates +Z cavity evacuation."""
+        """halt_emergency engages software interlock; clear_emergency disengages it; robot telemetry remains decoupled."""
         self.assertFalse(self.state.emergency_active)
 
         state = handle_command(self.state, {"intent": "halt_emergency", "status": "EXECUTE", "slots": {}})
         self.assertTrue(state.emergency_active)
-        self.assertEqual(state.telemetry.status, "EMERGENCY HALT (LOCKED)")
+        # Telemetry status is decoupled from command dispatch
+        self.assertEqual(state.telemetry.status, "STANDBY / OFFLINE")
 
         state = handle_command(state, {"intent": "clear_emergency", "status": "EXECUTE", "slots": {}})
         self.assertFalse(state.emergency_active)
-        self.assertEqual(state.telemetry.status, "EVACUATING CAVITY (+Z ASCENT)")
-        self.assertGreaterEqual(state.telemetry.z_mm, 250.0)
+        # Telemetry is decoupled; no arbitrary z coordinate jump
+        self.assertEqual(state.telemetry.status, "STANDBY / OFFLINE")
+        self.assertEqual(state.telemetry.z_mm, 0.0)
 
     # --- Tool Handlers ---
 
     def test_tool_handling_and_telemetry(self):
-        """pick_tool tracks held tool and updates telemetry; park_arm clears held tool and resets telemetry."""
+        """pick_tool tracks held tool in UI; park_arm clears held tool; robot telemetry remains decoupled from dispatch."""
         self.assertIsNone(self.state.held_tool)
 
-        # Valid pick_tool updates held tool and telemetry
+        # Valid pick_tool updates held tool in UI, leaving actuator telemetry decoupled
         state = handle_command(self.state, {"intent": "pick_tool", "status": "EXECUTE", "slots": {"tool_identifier": "scalpel"}})
         self.assertEqual(state.held_tool, "scalpel")
-        self.assertEqual(state.telemetry.gripper_status, "HOLDING SCALPEL")
-        self.assertEqual(state.telemetry.status, "OPERATIONAL")
+        self.assertEqual(state.telemetry.gripper_status, "STANDBY / OFFLINE")
+        self.assertEqual(state.telemetry.status, "STANDBY / OFFLINE")
 
         # Invalid tool is rejected
         state = handle_command(state, {"intent": "pick_tool", "status": "EXECUTE", "slots": {"tool_identifier": "laser_pointer"}})
         self.assertEqual(state.held_tool, "scalpel")
 
-        # park_arm clears held tool and returns gripper to standby
+        # park_arm clears held tool in UI
         state = handle_command(state, {"intent": "park_arm", "status": "EXECUTE", "slots": {}})
         self.assertIsNone(state.held_tool)
         self.assertEqual(state.telemetry.gripper_status, "STANDBY / OFFLINE")
-        self.assertEqual(state.telemetry.status, "PARKED / STANDBY")
+        self.assertEqual(state.telemetry.status, "STANDBY / OFFLINE")
 
     # --- Safety & Edge Cases ---
 

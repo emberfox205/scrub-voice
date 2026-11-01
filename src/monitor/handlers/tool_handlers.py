@@ -19,16 +19,14 @@ VALID_TOOLS = {"scalpel", "scissors", "hemostat", "forceps"}
 
 @register_intent("pick_tool")
 def handle_pick_tool(state: MonitorState, command: Dict[str, Any]) -> MonitorState:
-    """Updates held surgical tool identifier and gripper telemetry."""
+    """Updates held surgical tool identifier. Robot telemetry remains decoupled from command dispatch."""
     slots = command.get("slots", {})
     tool_id = slots.get("tool_identifier")
     if tool_id is not None:
         norm_tool = str(tool_id).strip().lower()
         if norm_tool in VALID_TOOLS:
             state.held_tool = norm_tool
-            state.telemetry.gripper_status = f"HOLDING {norm_tool.upper()}"
-            state.telemetry.status = "OPERATIONAL"
-            logger.info("Held tool updated to: %s (gripper holding)", state.held_tool)
+            logger.info("Held tool updated to: %s (actuator telemetry decoupled)", state.held_tool)
         else:
             logger.warning("Rejected invalid tool_identifier: %r (valid: %s)", tool_id, VALID_TOOLS)
     return state
@@ -36,10 +34,8 @@ def handle_pick_tool(state: MonitorState, command: Dict[str, Any]) -> MonitorSta
 
 @register_intent("park_arm")
 def handle_park_arm(state: MonitorState, command: Dict[str, Any]) -> MonitorState:
-    """Clears held tool and transitions robot and gripper to standby."""
+    """Clears held tool. Robot telemetry remains decoupled from command dispatch."""
     state.held_tool = None
-    state.telemetry.gripper_status = "STANDBY / OFFLINE"
-    state.telemetry.status = "PARKED / STANDBY"
-    logger.info("Arm parked; held tool cleared, gripper in standby.")
+    logger.info("Arm parked; held tool cleared.")
     return state
 

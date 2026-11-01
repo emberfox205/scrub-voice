@@ -16,22 +16,15 @@ logger = logging.getLogger("monitor.handlers.emergency")
 
 @register_intent("halt_emergency")
 def handle_halt_emergency(state: MonitorState, command: Dict[str, Any]) -> MonitorState:
-    """Activates surgical emergency halt interlock, locking brakes."""
+    """Activates surgical emergency halt interlock flag (actuator telemetry remains decoupled)."""
     state.emergency_active = True
-    state.telemetry.status = "EMERGENCY HALT (LOCKED)"
-    logger.critical("EMERGENCY INTERLOCK ACTIVATED: Robot motion suspended and brakes locked!")
+    logger.critical("EMERGENCY INTERLOCK ACTIVATED: Emergency halt engaged!")
     return state
 
 
 @register_intent("clear_emergency")
 def handle_clear_emergency(state: MonitorState, command: Dict[str, Any]) -> MonitorState:
-    """
-    Executes emergency evacuation: arm steers clear of surgical field (+Z vertical ascent)
-    to allow immediate human intervention.
-    """
+    """Clears surgical emergency halt interlock flag (actuator telemetry remains decoupled)."""
     state.emergency_active = False
-    state.telemetry.status = "EVACUATING CAVITY (+Z ASCENT)"
-    # Evacuate surgical cavity with high-speed vertical ascent (+Z)
-    state.telemetry.z_mm = max(state.telemetry.z_mm, 250.0)
-    logger.warning("EMERGENCY CLEAR: Arm steering clear of surgical area (+Z ascent) for human intervention.")
+    logger.warning("EMERGENCY CLEAR: Emergency interlock disengaged.")
     return state
