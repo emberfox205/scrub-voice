@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Benchmark Vosk grammar vs open-vocabulary on manifest:
+#   python test/benchmarks/bench_asr.py --manifest data/bench/manifest.jsonl --asrs vosk_grammar,vosk_open --out results/asr
+#
+#   # 2. Fast check with synthetic audio:
+#   python test/benchmarks/bench_asr.py --synthetic 6 --asrs vosk_grammar
+# ==============================================================================
 """Isolated ASR Subsystem Benchmark (Vosk & Whisper Decoders).
 
 Evaluates:

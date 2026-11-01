@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Harness smoke check (DSP isolated, synthetic clips):
+#   python test/benchmark_suite.py --synthetic 6 --stages dsp --scope isolated
+#
+#   # 2. Full academic paper run (offline, labelled manifest, 3 noise seeds, baselines):
+#   python test/benchmark_suite.py --manifest data/bench/manifest.jsonl \
+#       --noise-wav data/noise/or_noise.wav --scope both --baselines --seeds 3 --out results/full_eval
+#
+#   # 3. Live 10-second real-time capture from ReSpeaker 6-mic array on Pi 4:
+#   python test/benchmark_suite.py --mode live --live-seconds 10 --live-device 1 --live-channels 8
+#
+#   # 4. Multi-hour soak & memory leak test (120 minutes):
+#   python test/benchmark_suite.py --synthetic 10 --scope isolated --stages ipc --soak-minutes 120
+# ==============================================================================
 """SCRUB-VOICE Benchmark Suite (Raspberry Pi 4 / ARM64 edge evaluation).
 
 Master orchestrator for research-grade edge benchmarking:

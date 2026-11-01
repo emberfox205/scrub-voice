@@ -52,7 +52,7 @@ flowchart LR
 | **ASR** | [`src/asr/scripts/run_asr.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/asr/scripts/run_asr.py)<br/>[`src/asr/vocab.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/asr/vocab.py) | [ASR Metrics](../evaluations/asr/README.md) | [ASR Changes](../evaluations/asr/CHANGES.md) |
 | **NLU** | [`src/nlu/pipeline.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/nlu/pipeline.py)<br/>[`src/nlu/run_nlu.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/nlu/run_nlu.py)<br/>[`src/nlu/slot_extractor.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/nlu/slot_extractor.py)<br/>[`src/nlu/normalizer.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/nlu/normalizer.py) | [NLU Metrics](../evaluations/nlu/README.md) | [NLU Changes](../evaluations/nlu/CHANGES.md) |
 | **Orchestrator** | [`src/orchestrator/run_monitor_service.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/orchestrator/run_monitor_service.py)<br/>[`src/orchestrator/supervisor.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/src/orchestrator/supervisor.py) | [Orchestrator Metrics](../evaluations/orchestrator/README.md) | [Orchestrator Changes](../evaluations/orchestrator/CHANGES.md) |
-| **Full Pipeline** | [`test/benchmark_edge_profile.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/test/benchmark_edge_profile.py)<br/>[`pyproject.toml`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/pyproject.toml) | [Full Pipeline Metrics](../evaluations/full-pipe/README.md) | [Full Pipeline Changes](../evaluations/full-pipe/CHANGES.md) |
+| **Full Pipeline** | [`test/benchmarks/bench_e2e.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/test/benchmarks/bench_e2e.py)<br/>[`test/benchmark_suite.py`](file:///mnt/p/AntiGravity/FinalYear/Project_CurrentTopic/scrub-voice/test/benchmark_suite.py) | [Full Pipeline Metrics](../evaluations/full-pipe/README.md) | [Full Pipeline Changes](../evaluations/full-pipe/CHANGES.md) |
 
 ---
 
@@ -80,9 +80,9 @@ uv run python src/orchestrator/supervisor.py \
   --dump-audio results/dsp_debug
 ```
 
-### Run Edge Profiler (2 PyTorch/ONNX Threads, Custom WAV)
+### Run Edge Profiler & End-to-End Benchmark (2 PyTorch/ONNX Threads, Custom WAV)
 ```bash
-uv run python test/benchmark_edge_profile.py --threads 2 --no-pin --wav data/asr/test_mix_voice.wav
+uv run python test/benchmarks/bench_e2e.py --synthetic 10 --snr-sweep 15,10,5,0 --out results/e2e
 ```
 
 ### Launch Intraoperative Browser Monitor

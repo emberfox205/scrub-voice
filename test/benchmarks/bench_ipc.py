@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Standard IPC transport & dispatcher microbenchmark:
+#   python test/benchmarks/bench_ipc.py --reps-ipc 500 --out results/ipc
+#
+#   # 2. Fast check with fewer repetitions:
+#   python test/benchmarks/bench_ipc.py --reps-ipc 100
+# ==============================================================================
 """ZeroMQ IPC and Dispatcher Benchmark.
 
 Measures:

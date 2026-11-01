@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Standard NLU benchmark with thread sweep:
+#   python test/benchmarks/bench_nlu.py --reps-nlu 5 --nlu-thread-sweep --out results/nlu
+#
+#   # 2. Fast NLU benchmark on default clinical utterances:
+#   python test/benchmarks/bench_nlu.py --reps-nlu 2
+#
+#   # 3. Evaluate against external evaluation JSONL dataset:
+#   python test/benchmarks/bench_nlu.py --nlu-eval data/nlu/test_eval.jsonl
+# ==============================================================================
 """Isolated NLU Subsystem Benchmark (Intent Classification & Slot Extraction).
 
 Evaluates:

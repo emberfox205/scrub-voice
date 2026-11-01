@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Synthetic array audio with full SNR sweep (clean down to 0 dB):
+#   python test/benchmarks/bench_dsp.py --synthetic 10 --reps 50 --snr-sweep 20,15,10,5,0 --out results/dsp
+#
+#   # 2. Benchmark on labelled dataset manifest with real OR noise:
+#   python test/benchmarks/bench_dsp.py --manifest data/bench/manifest.jsonl --noise-wav data/noise/or_noise.wav
+#
+#   # 3. Quick smoke check on DSP timing only:
+#   python test/benchmarks/bench_dsp.py --synthetic 4 --reps 20 --snr-sweep "15,5"
+# ==============================================================================
 """Isolated DSP Subsystem Benchmark (Beamforming & Denoising).
 
 Evaluates:

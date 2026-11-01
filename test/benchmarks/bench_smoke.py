@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Standard fast smoke test (< 5s runtime):
+#   python test/benchmarks/bench_smoke.py
+#
+#   # 2. Fast smoke test including SetFit NLU neural model loading:
+#   python test/benchmarks/bench_smoke.py --with-nlu
+# ==============================================================================
 """Fast CI/CD smoke test harness for SCRUB-VOICE.
 
 Validates the core benchmark harness, acoustic simulation, DSP filtering,

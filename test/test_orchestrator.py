@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run orchestrator dispatcher unit tests (topic routing & priority preemption):
+#   python -m unittest test/test_orchestrator.py
+#
+#   # 2. Verbose test execution:
+#   python -m unittest -v test/test_orchestrator.py
+# ==============================================================================
 """
 Unit tests for Scrub-Voice Central Command Dispatcher.
 

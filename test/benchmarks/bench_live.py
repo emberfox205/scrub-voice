@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. 10-second live capture from ReSpeaker 6-mic array on Raspberry Pi:
+#   python test/benchmarks/bench_live.py --live-seconds 10 --live-device 1 --live-channels 8 --out results/live
+#
+#   # 2. Custom duration with specific channel mapping:
+#   python test/benchmarks/bench_live.py --live-seconds 15 --mic-channels 0,1,2,3,4,5
+# ==============================================================================
 """Live Hardware Capture & Real-Time Streaming Benchmark.
 
 Evaluates real-time audio acquisition and processing on edge hardware (e.g. Raspberry Pi 4 + ReSpeaker):

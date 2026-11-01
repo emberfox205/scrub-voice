@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run edge verification profiling (cold load, RAM delta, core affinity, schema):
+#   python test/test_edge.py
+#
+#   # 2. Pin to specific CPU core (e.g. core 2):
+#   python test/test_edge.py --pin-core 2
+#
+#   # 3. Specify explicit model directory:
+#   python test/test_edge.py --model-dir src/nlu/models/setfit_bge-micro-v2_8k
+# ==============================================================================
 """Verification test script for scrub-voice edge pipeline with CPU, Cores & RAM profiling."""
 
 import argparse

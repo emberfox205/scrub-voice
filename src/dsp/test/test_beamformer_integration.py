@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   python src/dsp/test/test_beamformer_integration.py
+# ==============================================================================
 import sys
 import time
 from pathlib import Path

@@ -318,16 +318,12 @@ class Registry:
             if name == "repo_denoiser":
                 if name in self.plugins:
                     return PluginDenoiser(self._plugin(name))
-                # Fallback to repo DuoFilter
+                # Fallback to repo DuoFilter (Stateful Streaming)
                 try:
                     from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
                     return PluginDenoiser(DuoFilterStreamingDenoiser())
                 except Exception:
-                    try:
-                        from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
-                        return PluginDenoiser(DuoFilterDenoiser())
-                    except Exception:
-                        return SpectralGate()
+                    return SpectralGate()
         elif kind == "asr":
             if name == "repo_asr":
                 if name in self.plugins:

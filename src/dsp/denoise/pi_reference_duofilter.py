@@ -1,4 +1,4 @@
 """Backward compatibility shim for DuoFilter denoiser."""
-from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
+from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser as DuoFilterDenoiser
 
 __all__ = ["DuoFilterDenoiser"]

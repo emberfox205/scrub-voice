@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Interactive quick menu prompt console:
+#   python test/test_monitor_prompt.py
+#
+#   # 2. Free-form voice/text prompt directly from CLI:
+#   python test/test_monitor_prompt.py "open ct scan"
+#   python test/test_monitor_prompt.py "zoom in 2.5x"
+#   python test/test_monitor_prompt.py "emergency stop immediately"
+#
+#   # 3. Direct argument flags:
+#   python test/test_monitor_prompt.py --open-scan ct --slice 45 --zoom 2.0
+#
+#   # 4. Automated clinical demo preset:
+#   python test/test_monitor_prompt.py --preset routine
+# ==============================================================================
 """Interactive Intraoperative Monitor Prompt Interface.
 
 Allows testers and presenters to dispatch standardized, schema-compliant JSON

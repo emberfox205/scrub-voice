@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. 2-Hour soak test on synthetic speech at 10 dB SNR:
+#   python test/benchmarks/bench_soak.py --soak-minutes 120 --synthetic 10 --out results/soak_120m
+#
+#   # 2. 15-Minute rapid burn-in check:
+#   python test/benchmarks/bench_soak.py --soak-minutes 15 --synthetic 5
+# ==============================================================================
 """Extended Soak & Burn-In Benchmark (Memory Leaks & Latency Drift).
 
 Evaluates edge runtime stability under sustained load:

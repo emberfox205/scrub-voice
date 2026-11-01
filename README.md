@@ -27,9 +27,9 @@ A fine-tuned SetFit intent classification model (`setfit_bge-micro-v2_8k`) is in
    ```bash
    pip install -r requirements.txt
    ```
-2. Run benchmark and interactive tester:
+2. Run edge verification and schema assertion:
    ```bash
-   python test/test_rpi_intent.py
+   python test/test_edge.py
    ```
 
 Detailed instructions and performance expectations are available in [docs/RPI4_DEPLOYMENT_GUIDE.md](docs/RPI4_DEPLOYMENT_GUIDE.md).

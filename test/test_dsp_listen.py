@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Listen to multi-channel reference recording:
+#   python test/test_dsp_listen.py --input data/asr/test_mix_voice.wav
+#
+#   # 2. Simulate 6-mic circular array on any arbitrary mono speech WAV:
+#   python test/test_dsp_listen.py --input path/to/my_speech.wav --simulate-array
+#
+#   # 3. Custom output directory and noise level:
+#   python test/test_dsp_listen.py --input data/asr/test_mix_voice.wav --out-dir artifacts/dsp_listen --noise-db 10.0
+# ==============================================================================
 """Interactive DSP Acoustic Stage Listener.
 
 Takes any input WAV file (multi-channel or single-channel), runs each DSP
@@ -45,6 +56,7 @@ def process_and_dump_stages(
     vad_threshold: float = 0.40,
     force_simulate_array: bool = False,
     atten_lim_db: float = 20.0,
+    split_band_hz: Optional[float] = 2500.0,
 ) -> dict:
     """Processes input audio stage-by-stage and saves WAVs for acoustic listening."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -110,11 +122,17 @@ def process_and_dump_stages(
 
     # 4. Stage 3: Neural Denoiser (DuoFilter / DeepFilterNet)
     print(f"[*] Running Neural Noise Suppressor ({denoiser_type})...")
-    denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / f"{denoiser_type}.onnx"
+    model_stem = "duofilter_stateful" if denoiser_type in ["duofilter", "duofilter_stateful"] else denoiser_type
+    denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / f"{model_stem}.onnx"
     if not denoiser_model.exists():
-        denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / f"{denoiser_type}.onnx"
+        denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / f"{model_stem}.onnx"
 
-    denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
+    denoiser = DuoFilterDenoiser(
+        model_path=denoiser_model,
+        threads=1,
+        atten_lim_db=atten_lim_db,
+        split_band_hz=split_band_hz,
+    )
     denoised = denoiser.enhance(beamformed, sample_rate=sr)
 
     # 5. Energy Metrics
@@ -201,6 +219,12 @@ def main():
         default=20.0,
         help="Attenuation limit in dB (e.g. 10.0 or 6.0 to preserve natural floor for ASR)",
     )
+    parser.add_argument(
+        "--split-band-hz",
+        type=float,
+        default=2500.0,
+        help="Split-band frequency in Hz (default: 2500.0 to shield consonants for ASR, or 0 / >= 8000 to disable)",
+    )
 
     args = parser.parse_args()
     if not args.input.exists():
@@ -213,6 +237,7 @@ def main():
         denoiser_type=args.denoiser_type,
         force_simulate_array=args.simulate_array,
         atten_lim_db=args.atten_lim_db,
+        split_band_hz=args.split_band_hz if args.split_band_hz > 0 else None,
     )
 
 

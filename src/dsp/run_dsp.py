@@ -36,7 +36,6 @@ if str(REPO_ROOT / "src" / "dsp") not in sys.path:
 
 from src.dsp.denoise.sota_onnx.deepfilternet_denoiser import DeepFilterDenoiser
 from src.dsp.denoise.sota_onnx.gtcrn_denoiser import GTCRNDenoiser
-from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
 from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
 from dsp.source.audio_streamer import AudioStreamer
 from dsp.source.beamformer import DASBeamformer
@@ -120,19 +119,6 @@ def run_dsp_service(
             logger.info(
                 f"Stateful DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
             )
-        elif dtype == "duofilter_stateless":
-            denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
-            denoiser = DuoFilterDenoiser(
-                model_path=denoiser_model,
-                threads=1,
-                atten_lim_db=atten_lim_db,
-                split_band_hz=split_band_hz,
-            )
-            # Warmup denoiser
-            _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info(
-                f"Stateless DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
-            )
         elif dtype == "gtcrn":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "gtcrn_simple.onnx"
             denoiser = GTCRNDenoiser(model_path=denoiser_model, threads=1)
@@ -155,7 +141,7 @@ def run_dsp_service(
                 f"DeepFilterNet ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
             )
         else:
-            raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'duofilter_stateless', 'gtcrn', 'deepfilter'")
+            raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'gtcrn', 'deepfilter'")
 
     context, push = connect_push_socket(audio_addr)
 
@@ -272,9 +258,9 @@ def main() -> None:
     parser.add_argument("--audio-addr", type=str, default=DEFAULT_AUDIO_ADDR, help="ZeroMQ audio address")
     parser.add_argument(
         "--denoiser-type",
-        choices=["duofilter", "duofilter_stateful", "duofilter_stateless", "gtcrn", "deepfilter"],
+        choices=["duofilter", "duofilter_stateful", "gtcrn", "deepfilter"],
         default="duofilter",
-        help="Select denoiser model: 'duofilter' (stateful, default), 'duofilter_stateless', 'gtcrn', or 'deepfilter'",
+        help="Select denoiser model: 'duofilter' (stateful streaming, default), 'gtcrn', or 'deepfilter'",
     )
     parser.add_argument("--no-denoise", dest="denoise", action="store_false", help="Bypass AI neural denoiser")
     parser.add_argument("--no-spatial", dest="spatial", action="store_false", help="Bypass localizer and beamformer")

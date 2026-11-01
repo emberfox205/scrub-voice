@@ -99,15 +99,6 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
     return final_spec
 
 
-try:
-    from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
-except ImportError:
-    try:
-        from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
-    except ImportError:
-        DuoFilterDenoiser = None  # type: ignore
-
-
 class DeepFilterDenoiser:
     """DeepFilterNet ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
     # ---------------------------------------------------------

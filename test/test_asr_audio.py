@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Transcribe single audio file (Vosk open vocabulary):
+#   python test/test_asr_audio.py data/asr/test_clip_event.wav
+#
+#   # 2. Constrain to surgical grammar and preview NLU intent classification:
+#   python test/test_asr_audio.py data/asr/test_clip_event.wav --grammar --with-nlu
+#
+#   # 3. Batch transcribe all WAV files in a directory:
+#   python test/test_asr_audio.py artifacts/dsp_listen/ --grammar
+# ==============================================================================
 """Interactive ASR Audio File Tester.
 
 Allows testing any audio file (DSP stage outputs, internet recordings, or AI-generated

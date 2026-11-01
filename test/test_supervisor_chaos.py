@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run supervisor chaos & process fault-recovery test (SIGKILL + auto-heal):
+#   python -m unittest test/test_supervisor_chaos.py
+#
+#   # 2. Verbose execution:
+#   python -m unittest -v test/test_supervisor_chaos.py
+# ==============================================================================
 """Supervisor & Chaos Recovery Integration Test.
 
 Verifies:

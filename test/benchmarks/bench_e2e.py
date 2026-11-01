@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. End-to-end benchmark on synthetic clips across SNR sweep:
+#   python test/benchmarks/bench_e2e.py --synthetic 10 --snr-sweep 15,10,5,0 --out results/e2e
+#
+#   # 2. Full evaluation on labelled manifest with real OR noise & baselines:
+#   python test/benchmarks/bench_e2e.py --manifest data/bench/manifest.jsonl \
+#       --noise-wav data/noise/or_noise.wav --baselines --seeds 3 --out results/e2e_full
+#
+#   # 3. Fast verification run (single repetition):
+#   python test/benchmarks/bench_e2e.py --synthetic 2 --warmup 1
+# ==============================================================================
 """End-to-End Pipeline Benchmark (Streaming Post-Speech Latency & Accuracy).
 
 Evaluates the integrated edge voice system:

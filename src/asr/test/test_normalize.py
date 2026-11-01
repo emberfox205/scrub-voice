@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   python -m unittest src/asr/test/test_normalize.py
+#   python -m unittest discover -s src/asr/test -v
+# ==============================================================================
 """Unit tests for asr.normalize. Run from the repository root:
     python -m unittest discover -s src/asr/test -v
 """

@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   pytest src/dsp/test/unittest_beamformer.py -v
+# ==============================================================================
 """
 Level 1: Unit Tests for DASBeamformer (Synthetic Data — No Hardware)
 """

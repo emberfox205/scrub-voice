@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   python -m unittest src/asr/test/test_vosk_engine.py
+#   python -m unittest discover -s src/asr/test -v
+# ==============================================================================
 """Tests for the Vosk engine: the log_event splice (no model needed) and
 word times on a real clip (needs the downloaded model, skipped otherwise).
 Run from the repository root:
