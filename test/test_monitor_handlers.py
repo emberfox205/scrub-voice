@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run monitor modular intent handler unit tests:
+#   python -m unittest test/test_monitor_handlers.py
+#
+#   # 2. Verbose test execution:
+#   python -m unittest -v test/test_monitor_handlers.py
+# ==============================================================================
 """
 Unit tests for Scrub-Voice Monitor Modular Intent Handlers.
 Verifies state transitions, parameter validation, slot clamping,

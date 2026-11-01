@@ -7,7 +7,7 @@ This document defines the canonical folder hierarchy and placement rules for the
 ## 1. High-Level Repository Tree
 
 ```text
-ur_arm/
+scrub-voice/
 ├── .gitattributes
 ├── .gitignore
 ├── AGENTS.md
@@ -98,7 +98,8 @@ ur_arm/
 
 ### `test/`
 
-* **Purpose:** Top-level end-to-end testing, hardware benchmark runners, and edge performance profiling scripts (e.g., `test_rpi_intent.py` for Raspberry Pi 4).
+* **Purpose:** Top-level end-to-end testing, modular benchmark runners, interactive audio listening, and edge performance profiling scripts (e.g., `test_edge.py`, `test_dsp_listen.py`, `test_asr_audio.py`, `test_monitor_prompt.py`, `benchmark_suite.py`).
+  * `benchmarks/`: Modular benchmark runner suite (`bench_smoke.py`, `bench_ipc.py`, `bench_dsp.py`, `bench_nlu.py`, `bench_asr.py`, `bench_e2e.py`, `bench_live.py`, `bench_soak.py`) and statistical/telemetry modules in `common/`.
 
 ---
 

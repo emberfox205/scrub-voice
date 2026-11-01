@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Publish routine surgical command preset every 1.5s:
+#   python test/mock_publisher.py --preset routine --interval 1.5
+#
+#   # 2. Publish high-priority emergency stop sequence:
+#   python test/mock_publisher.py --preset emergency
+#
+#   # 3. Publish single explicit command (e.g. pick_tool scalpel):
+#   python test/mock_publisher.py --intent pick_tool --slots '{"tool_identifier": "scalpel"}'
+# ==============================================================================
 """
 Scrub-Voice Mock Command Publisher.
 

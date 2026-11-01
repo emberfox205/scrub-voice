@@ -4,6 +4,7 @@ import onnxruntime as ort
 import soundfile as sf
 import torch
 import torchaudio
+from typing import Optional
 from torch import Tensor
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -45,12 +46,21 @@ def make_erb_filterbank(sample_rate, n_fft, erb_bins, low_freq=0.0, high_freq=No
 def erb_synthesis_matrix(filterbank: Tensor, eps: float = 1e-8) -> Tensor:
     return filterbank.T / filterbank.sum(dim=0, keepdim=True).T.clamp_min(eps)
 
-def apply_erb_gains(input_spec: Tensor, gains: Tensor, synthesis_matrix: Tensor) -> Tensor:
+def apply_erb_gains(
+    input_spec: Tensor,
+    gains: Tensor,
+    synthesis_matrix: Tensor,
+    atten_lim_db: float | None = 20.0,
+) -> Tensor:
     if gains.ndim != 4 or gains.shape[1] != 1:
         raise ValueError("gains must have shape [B, 1, T, E]")
-        
-    frequency_gain = gains[:, 0] @ synthesis_matrix.T    # -> [B, T, F]
-    
+
+    if atten_lim_db is not None and atten_lim_db < 100.0:
+        min_gain = 10.0 ** (-atten_lim_db / 20.0)
+        gains = torch.clamp(gains, min=min_gain)
+
+    frequency_gain = gains[:, 0] @ synthesis_matrix.T  # -> [B, T, F]
+
     return input_spec.transpose(1, 2) * frequency_gain.to(input_spec.dtype)
 
 def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, df_bins: int = 96, df_order: int = 5, lookahead: int = 0) -> Tensor:
@@ -89,15 +99,6 @@ def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, 
     return final_spec
 
 
-try:
-    from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
-except ImportError:
-    try:
-        from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
-    except ImportError:
-        DuoFilterDenoiser = None  # type: ignore
-
-
 class DeepFilterDenoiser:
     """DeepFilterNet ONNX inference engine optimized for Raspberry Pi / Edge CPU."""
     # ---------------------------------------------------------
@@ -116,9 +117,11 @@ class DeepFilterDenoiser:
         erb_bins: int = 32,
         df_bins: int = 96,
         threads: int = 1,
+        atten_lim_db: float | None = 20.0,
+        split_band_hz: float | None = 2500.0,
     ):
         if model_path is None:
-            onnx_sub = CURRENT_DIR / "onnx" / "deepfilternet.onnx"
+            onnx_sub = DENOISE_DIR / "onnx" / "deepfilternet.onnx"
             model_path = onnx_sub if onnx_sub.exists() else CURRENT_DIR / "deepfilternet.onnx"
         self.model_path = Path(model_path)
         self.sample_rate = sample_rate
@@ -127,6 +130,26 @@ class DeepFilterDenoiser:
         self.win_length = win_length
         self.erb_bins = erb_bins
         self.df_bins = df_bins
+        self.atten_lim_db = atten_lim_db
+        self.split_band_hz = split_band_hz
+
+        # Precompute Split-Band Consonant Shield weights if enabled
+        n_bins = self.n_fft // 2 + 1
+        if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+            bin_hz = self.sample_rate / self.n_fft
+            split_bin = int(round(self.split_band_hz / bin_hz))
+            transition_bins = 8
+            half_trans = max(1, transition_bins // 2)
+            start_bin = max(0, split_bin - half_trans)
+            end_bin = min(n_bins, split_bin + half_trans)
+
+            weights = torch.ones(n_bins, dtype=torch.float32)
+            if start_bin < end_bin:
+                weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+            weights[end_bin:] = 0.0
+            self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, n_bins)
+        else:
+            self.split_weights = None
 
         torch.set_num_threads(threads)
         options = ort.SessionOptions()
@@ -174,7 +197,9 @@ class DeepFilterDenoiser:
         df_coefficients = torch.from_numpy(outputs[1])
         alpha = torch.from_numpy(outputs[2])
 
-        stage1_spec = apply_erb_gains(input_spec, erb_gains, self.synthesis_matrix)
+        stage1_spec = apply_erb_gains(
+            input_spec, erb_gains, self.synthesis_matrix, atten_lim_db=self.atten_lim_db
+        )
         final_spec = apply_deep_filter(
             stage1_spec=stage1_spec,
             coefficients=df_coefficients,
@@ -183,6 +208,12 @@ class DeepFilterDenoiser:
             df_order=5,
             lookahead=1,
         )
+
+        # Split-Band Consonant Shield: Preserve raw/beamformed audio in high frequencies (> split_band_hz)
+        if self.split_weights is not None:
+            raw_spec = input_spec.transpose(1, 2)
+            final_spec = self.split_weights * final_spec + (1.0 - self.split_weights) * raw_spec
+
         enh_wav = torch.istft(
             final_spec.transpose(1, 2),
             n_fft=self.n_fft,

@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run MuJoCo simulation tests via pytest:
+#   pytest test/test_mujoco_sim.py -v
+#
+#   # 2. Or run via unittest / pytest:
+#   python -m pytest test/test_mujoco_sim.py
+# ==============================================================================
 """
 Unit and Integration Tests for MuJoCo UR-10e and RG-2 Gripper Simulation.
 """
