@@ -845,6 +845,15 @@ investigated as a bug.
 Note: reusing a recognizer and calling `Reset()` (below) did **not** fix the
 Vosk variation on its own – dither was the cause.
 
+> **Interaction with Neural Denoising:** Setting `--dither=0` creates deterministic
+> benchmarks, but if upstream neural denoisers (DuoFilter/DeepFilterNet) apply
+> unconstrained suppression down to $0.0$, Kaldi can hit $\ln(0) = -\infty$ and
+> zero-variance CMVN collapse during pauses. The DSP pipeline now resolves this via
+> **Minimum Gain Floor Clamping (`--atten-lim-db 20.0`)** and **Split-Band DuoFilter
+> (`--split-band-hz 2500.0`)**, ensuring a $-20\text{ dB}$ real acoustic floor and
+> protecting high-frequency consonants without re-introducing test variation. For live
+> deployments, a subtle dither (`--dither=0.2`) can also be safely used.
+
 ### Other engine fixes
 - **Vosk:** one recognizer per engine, `Reset()` after each clip, instead of a
   new recognizer per clip. Median latency 0.80 s → **0.13 s** (free-form);

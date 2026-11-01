@@ -135,21 +135,29 @@ python src/dsp/denoise/sota_onnx/deepfilternet_denoiser.py
 
 `run_dsp.py` connects Silero VAD, SRP-PHAT Localizer, DAS Beamformer, and any selected denoiser to stream 0.5s cleaned speech chunks to ASR via ZeroMQ IPC.
 
+### ASR-Optimized Denoising Modes (New)
+To resolve the speech distortion vs. noise reduction trade-off and prevent neural denoisers from attenuating fragile unvoiced consonants (/s/, /f/, /t/, /k/), `run_dsp.py` supports:
+* **`--atten-lim-db <dB>` (Default: `20.0`):** Enforces a minimum gain floor. Limits maximum noise suppression so the denoiser never drives silence or room acoustics to dead digital zeros ($-\infty\text{ dB}$).
+* **`--split-band-hz <Hz>` (Default: `2500.0`):** Enables **Split-Band DuoFilter (Consonant Shield)**. The neural network cleans heavy motor/HVAC rumble in the low band ($< 2.5\text{ kHz}$), while high-frequency beamformed audio ($> 2.5\text{ kHz}$) passes through cleanly to guarantee $100\%$ consonant preservation.
+
 ```bash
-# 1. Stateful DuoFilter (0.5s chunk streaming, default):
-python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type duofilter
+# 1. Stateful DuoFilter with Split-Band Consonant Shield (Recommended default for ASR):
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type duofilter --atten-lim-db 20.0 --split-band-hz 2500.0
 
 # 2. GTCRN denoiser:
 python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type gtcrn
 
 # 3. Stateless DuoFilter:
-python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type duofilter_stateless
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type duofilter_stateless --split-band-hz 2500.0
 
 # 4. DeepFilterNet:
-python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type deepfilter
+python src/dsp/run_dsp.py --wav data/asr/test_clip_event.wav --denoiser-type deepfilter --atten-lim-db 20.0 --split-band-hz 2500.0
 
 # 5. Live hardware mic array (Seeed 8-mic):
 python src/dsp/run_dsp.py --device "plughw:seeed8micvoicec,0" --denoiser-type duofilter
+
+# 6. Bypass neural denoiser completely (Direct Beamforming -> Vosk):
+python src/dsp/run_dsp.py --device "plughw:seeed8micvoicec,0" --no-denoise
 ```
 
 ---

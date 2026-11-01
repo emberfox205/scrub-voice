@@ -83,6 +83,7 @@ def run_dsp_service(
     realtime: bool = True,
     loop: bool = False,
     atten_lim_db: Optional[float] = 20.0,
+    split_band_hz: Optional[float] = 2500.0,
     silence_hangover_sec: float = 1.5,
 ) -> None:
     """Run the DSP streaming loop."""
@@ -108,16 +109,30 @@ def run_dsp_service(
         dtype = denoiser_type.lower()
         if dtype in ["duofilter", "duofilter_stateful"]:
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter_stateful.onnx"
-            denoiser = DuoFilterStreamingDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
+            denoiser = DuoFilterStreamingDenoiser(
+                model_path=denoiser_model,
+                threads=1,
+                atten_lim_db=atten_lim_db,
+                split_band_hz=split_band_hz,
+            )
             # Warmup denoiser
             _ = denoiser.enhance_chunk(dummy_multichannel[0])
-            logger.info(f"Stateful DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB).")
+            logger.info(
+                f"Stateful DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
+            )
         elif dtype == "duofilter_stateless":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
-            denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
+            denoiser = DuoFilterDenoiser(
+                model_path=denoiser_model,
+                threads=1,
+                atten_lim_db=atten_lim_db,
+                split_band_hz=split_band_hz,
+            )
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info(f"Stateless DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB).")
+            logger.info(
+                f"Stateless DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
+            )
         elif dtype == "gtcrn":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "gtcrn_simple.onnx"
             denoiser = GTCRNDenoiser(model_path=denoiser_model, threads=1)
@@ -128,10 +143,17 @@ def run_dsp_service(
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "deepfilternet.onnx"
             if not denoiser_model.exists():
                 denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
-            denoiser = DeepFilterDenoiser(model_path=denoiser_model, threads=1, atten_lim_db=atten_lim_db)
+            denoiser = DeepFilterDenoiser(
+                model_path=denoiser_model,
+                threads=1,
+                atten_lim_db=atten_lim_db,
+                split_band_hz=split_band_hz,
+            )
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info(f"DeepFilterNet ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB).")
+            logger.info(
+                f"DeepFilterNet ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
+            )
         else:
             raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'duofilter_stateless', 'gtcrn', 'deepfilter'")
 
@@ -266,6 +288,12 @@ def main() -> None:
         help="Attenuation limit in dB (default: 20.0 to preserve natural acoustic floor for ASR, or >= 100 for full suppression)",
     )
     parser.add_argument(
+        "--split-band-hz",
+        type=float,
+        default=2500.0,
+        help="Split-band frequency in Hz (default: 2500.0 to shield consonants for ASR, or 0 / >= 8000 to disable)",
+    )
+    parser.add_argument(
         "--silence-hangover-sec",
         type=float,
         default=1.5,
@@ -285,6 +313,7 @@ def main() -> None:
         realtime=args.realtime,
         loop=args.loop,
         atten_lim_db=args.atten_lim_db,
+        split_band_hz=args.split_band_hz,
         silence_hangover_sec=args.silence_hangover_sec,
     )
 
