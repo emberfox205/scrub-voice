@@ -66,3 +66,4 @@ artifacts/
 *.zip
 *.7z
 
+.agents/
