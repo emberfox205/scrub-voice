@@ -179,6 +179,21 @@ def record_live(
 
     prev_handler = signal.signal(signal.SIGINT, handle_sigint)
 
+    # In manual mode, spawn background thread to detect [Enter] key press
+    if manual_mode:
+        import threading
+
+        def wait_for_enter():
+            nonlocal interrupted
+            try:
+                sys.stdin.readline()
+                interrupted = True
+            except Exception:
+                pass
+
+        key_thread = threading.Thread(target=wait_for_enter, daemon=True)
+        key_thread.start()
+
     try:
         if use_arecord:
             streamer = AudioStreamer(
@@ -279,11 +294,18 @@ def record_live(
 def main():
     parser = argparse.ArgumentParser(description="Quick, safe hardware audio recorder for testing and calibration")
     parser.add_argument(
-        "output",
+        "output_pos",
         type=Path,
         nargs="?",
         default=None,
-        help="Optional destination path for WAV file (default: data/wav_files/test_rec_<timestamp>.wav)",
+        metavar="OUTPUT",
+        help="Optional destination path for WAV file (positional)",
+    )
+    parser.add_argument(
+        "-o", "--output",
+        type=Path,
+        default=None,
+        help="Destination path for WAV file (default: data/wav_files/test_recording_<timestamp>.wav)",
     )
     parser.add_argument(
         "-d", "--duration",
@@ -314,9 +336,10 @@ def main():
     )
     args = parser.parse_args()
 
-    # Determine destination filename
-    if args.output is not None:
-        out_p = args.output
+    # Determine destination filename (prioritize -o flag, fallback to positional)
+    target_output = args.output or args.output_pos
+    if target_output is not None:
+        out_p = target_output
         if not out_p.suffix:
             out_p = out_p.with_suffix(".wav")
     else:

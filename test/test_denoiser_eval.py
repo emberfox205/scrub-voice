@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# HELPER / RUN COMMANDS:
-#   # 1. Comparative denoiser matrix evaluation on single audio file:
-#   python test/test_denoiser_eval.py --audio data/asr/test_clip_event.wav
-#
-#   # 2. Batch evaluation across all files matching glob:
-#   python test/test_denoiser_eval.py --audio "data/asr/sample_*.wav"
-#
-#   # 3. Custom output report:
-#   python test/test_denoiser_eval.py --audio data/asr/test_mix_voice.wav --out results/denoiser_eval.json
-# ==============================================================================
 """Unified DSP Denoiser & ASR/NLU Comparative Benchmark Suite.
 
 Evaluates acoustic denoiser configurations (Beamformed baseline, Old full-band
@@ -18,21 +7,27 @@ the surgical Vosk ASR grammar model and downstream NLU intent classification.
 
 Key Invariants:
 1. Single-Load In-Memory Pipeline: Loads Vosk and SetFit NLU exactly once,
-   eliminating the 15-20s model initialization overhead across files.
+   eliminating model reload overhead across multiple files and conditions.
 2. Multi-Condition Matrix: Evaluates Beamformed, Denoised Old (Full-band 20dB),
    Denoised New (Split-band 2.5kHz 20dB), and Denoised Dialed-back (10dB).
-3. Ground Truth Evaluation: Calculates Word Error Rate (WER), keyword hit rate,
-   phonetic consonant preservation (e.g., /θ/ in 'three' vs 'ray'), and NLU intent match.
-4. Batch Audio Support: Evaluates built-in clinical audio datasets or arbitrary files/globs.
+3. Intraoperative Multi-Command Segmentation: Splits 20s spoken routines into
+   distinct command utterances by silence pauses and evaluates NLU intents for each.
+4. Ground Truth Evaluation: Calculates Word Error Rate (WER), keyword hit rate,
+   phonetic consonant preservation (e.g., /θ/ in 'three' vs 'ray'), and NLU intent matches.
 """
 
 from __future__ import annotations
 
+import os
+import sys
+
+# Force offline execution before importing HuggingFace / SetFit modules
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 import argparse
 import math
-import os
 import re
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,8 +49,42 @@ from src.dsp.source.beamformer import DASBeamformer
 from src.dsp.source.localizer import SRPLocalizer
 from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
 
-# Default Clinical Benchmark Dataset with Ground Truth Captions
-BENCHMARK_CASES = [
+# 1. New 20-Second Intraoperative Ground Truth Dataset (Recorded on Seeed 6-Mic Array)
+BENCHMARK_CASES_20S = [
+    {
+        "id": "truth_01_dicom_inspection",
+        "path": REPO_ROOT / "data" / "wav_files" / "truth_01_dicom_inspection.wav",
+        "ground_truth": "open ct scan zoom in two times advance three slices zoom out three times next slice",
+        "key_words": ["open", "two", "three", "slice", "zoom"],
+    },
+    {
+        "id": "truth_02_tool_delivery",
+        "path": REPO_ROOT / "data" / "wav_files" / "truth_02_tool_delivery.wav",
+        "ground_truth": "log event first incision note patient vitals stable hand me the scalpel pass the surgical scissors park robot arm",
+        "key_words": ["incision", "scalpel", "scissors", "park"],
+    },
+    {
+        "id": "truth_03_consonant_stress",
+        "path": REPO_ROOT / "data" / "wav_files" / "truth_03_consonant_stress.wav",
+        "ground_truth": "show mri scan zoom in three point five times advance six slices go to slice thirty three zoom out two times",
+        "key_words": ["mri", "three", "six", "slice", "thirty"],
+    },
+    {
+        "id": "truth_04_hemostasis_audit",
+        "path": REPO_ROOT / "data" / "wav_files" / "truth_04_hemostasis_audit.wav",
+        "ground_truth": "hand me the hemo stat clamp log event bleeding controlled note vessel clamped rewind twenty slices close display viewer",
+        "key_words": ["clamp", "hemostat", "bleeding", "slices", "close"],
+    },
+    {
+        "id": "truth_05_emergency_recovery",
+        "path": REPO_ROOT / "data" / "wav_files" / "truth_05_emergency_recovery.wav",
+        "ground_truth": "hard stop robot immediately freeze emergency clear evacuate area clear emergency dock arm",
+        "key_words": ["stop", "freeze", "clear", "emergency", "dock"],
+    },
+]
+
+# 2. Legacy Benchmark Cases (Short Audio Samples)
+BENCHMARK_CASES_LEGACY = [
     {
         "id": "live_capture",
         "path": REPO_ROOT / "data" / "asr" / "live_capture.wav",
@@ -86,6 +115,7 @@ NUMBER_MAP = {
     "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
     "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
     "0": "zero", "x": "times", "3x": "three times", "2x": "two times",
+    "hemostat": "hemo stat",
 }
 
 
@@ -130,6 +160,47 @@ def calculate_wer(reference: str, hypothesis: str) -> float:
     return float(d[len(ref), len(hyp)]) / len(ref)
 
 
+def segment_words_into_utterances(words: list, max_pause_sec: float = 0.8) -> list[dict]:
+    """Splits words into distinct spoken commands based on silence pauses."""
+    if not words:
+        return []
+
+    utterances = []
+    current_words = [words[0]]
+
+    for i in range(1, len(words)):
+        prev_end = words[i - 1].end
+        curr_start = words[i].start
+        pause = curr_start - prev_end
+
+        if pause >= max_pause_sec:
+            utt_text = " ".join(w.word for w in current_words)
+            mean_conf = sum(w.confidence for w in current_words) / len(current_words)
+            utterances.append({
+                "text": utt_text,
+                "start": current_words[0].start,
+                "end": current_words[-1].end,
+                "duration": current_words[-1].end - current_words[0].start,
+                "confidence": mean_conf,
+            })
+            current_words = [words[i]]
+        else:
+            current_words.append(words[i])
+
+    if current_words:
+        utt_text = " ".join(w.word for w in current_words)
+        mean_conf = sum(w.confidence for w in current_words) / len(current_words)
+        utterances.append({
+            "text": utt_text,
+            "start": current_words[0].start,
+            "end": current_words[-1].end,
+            "duration": current_words[-1].end - current_words[0].start,
+            "confidence": mean_conf,
+        })
+
+    return utterances
+
+
 def beamform_audio(data: np.ndarray, sr: int) -> np.ndarray:
     """Performs spatial localization and Delay-and-Sum beamforming on multichannel audio."""
     if data.ndim == 1:
@@ -158,9 +229,8 @@ class EvaluationResult:
     transcript: str
     confidence: float
     wer: float
-    intent: str
-    status: str
-    slots: Dict[str, Any]
+    command_intents: List[str]
+    detected_utterances: List[Dict[str, Any]]
     rtf: float
     preserved_keywords: List[str]
     missing_keywords: List[str]
@@ -173,10 +243,12 @@ class DenoiserBenchmarkRunner:
         self,
         config_name: str = PRODUCTION_CONFIG,
         run_nlu: bool = True,
+        pause_threshold: float = 0.8,
     ):
-        print("=" * 70)
+        self.pause_threshold = pause_threshold
+        print("=" * 75)
         print("         SCRUB-VOICE DENOISER & ASR/NLU BENCHMARK SUITE")
-        print("=" * 70)
+        print("=" * 75)
         sys.stdout.flush()
 
         t0 = time.perf_counter()
@@ -190,7 +262,7 @@ class DenoiserBenchmarkRunner:
             print("[*] Initializing NLU Intent Pipeline...", end="", flush=True)
             try:
                 from src.nlu.pipeline import VoiceToIntentPipeline
-                self.nlu_pipeline = VoiceToIntentPipeline(num_threads=1)
+                self.nlu_pipeline = VoiceToIntentPipeline(num_threads=2)
                 print(f" done ({time.perf_counter() - t1:.2f}s).", flush=True)
             except Exception as e:
                 print(f" failed ({e}). Proceeding without NLU.", flush=True)
@@ -214,7 +286,7 @@ class DenoiserBenchmarkRunner:
         condition_name: str,
         expected_keywords: List[str],
     ) -> EvaluationResult:
-        """Transcribes single-channel audio and evaluates against reference text."""
+        """Transcribes audio, segments into utterances, and evaluates ASR & NLU."""
         duration = len(audio_mono) / 16000.0
         t0 = time.perf_counter()
         asr_res = self.asr_engine.transcribe(audio_mono)
@@ -235,27 +307,33 @@ class DenoiserBenchmarkRunner:
             else:
                 missing.append(kw)
 
-        # Run NLU
-        intent = "N/A"
-        status = "N/A"
-        slots = {}
-        if self.nlu_pipeline and transcript:
-            try:
-                env = self.nlu_pipeline.process(transcript)
-                intent = env.get("intent", "unknown")
-                status = env.get("status", "unknown")
-                slots = env.get("slots", {})
-            except Exception as e:
-                intent = f"ERR: {e}"
+        # Segment words into distinct command utterances by pauses
+        segmented_utts = segment_words_into_utterances(asr_res.words, max_pause_sec=self.pause_threshold)
+        command_intents = []
+
+        if self.nlu_pipeline:
+            for utt in segmented_utts:
+                try:
+                    env = self.nlu_pipeline.process(utt["text"])
+                    intent = env.get("intent", "unknown")
+                    status = env.get("status", "unknown")
+                    slots = env.get("slots", {})
+                    utt["intent"] = intent
+                    utt["status"] = status
+                    utt["slots"] = slots
+                    command_intents.append(f"{intent} [{status}]")
+                except Exception as e:
+                    command_intents.append(f"ERR({e})")
+        else:
+            command_intents = ["N/A"]
 
         return EvaluationResult(
             condition_name=condition_name,
             transcript=transcript,
             confidence=confidence,
             wer=wer,
-            intent=intent,
-            status=status,
-            slots=slots,
+            command_intents=command_intents,
+            detected_utterances=segmented_utts,
             rtf=rtf,
             preserved_keywords=preserved,
             missing_keywords=missing,
@@ -270,15 +348,16 @@ class DenoiserBenchmarkRunner:
     ) -> Dict[str, EvaluationResult]:
         """Runs all denoiser conditions on one multi-channel or single-channel audio file."""
         expected_keywords = expected_keywords or []
-        print(f"\n{'='*70}")
-        print(f"  TEST FILE: {file_path.name}")
+        print(f"\n{'='*75}")
+        print(f"  AUDIO FILE  : {file_path.name}")
         if ground_truth:
             print(f"  GROUND TRUTH: \"{ground_truth}\"")
-        print(f"{'='*70}")
+        print(f"{'='*75}")
         sys.stdout.flush()
 
         data, sr = sf.read(str(file_path), dtype="float32")
         duration = (data.shape[0] if data.ndim == 1 else data.shape[1]) / sr
+        print(f"  Duration    : {duration:.2f}s | Channels: {data.shape[0] if data.ndim > 1 and data.shape[0] < data.shape[1] else (1 if data.ndim == 1 else data.shape[1])}")
 
         # 1. Spatial Beamforming
         t0 = time.perf_counter()
@@ -316,14 +395,20 @@ class DenoiserBenchmarkRunner:
             results[cond_name] = res
 
             status_mark = "✅" if res.wer < 0.20 else ("⚠️" if res.wer < 0.45 else "❌")
-            print(f"  [{cond_name}]")
+            print(f"\n  [{cond_name}]")
             print(f"    Transcript : \"{res.transcript}\"")
             print(f"    Metrics    : WER: {res.wer:.1%} | Conf: {res.confidence:.1%} | RTF: {res.rtf:.3f} | {status_mark}")
             if res.missing_keywords:
                 print(f"    Missing KW : {res.missing_keywords} (Consonant cut!)")
-            if res.intent != "N/A":
-                print(f"    NLU Intent : {res.intent} [{res.status}]")
-            print("-" * 70)
+            
+            # Print detected segmented commands and their NLU intents
+            if res.detected_utterances:
+                print(f"    Commands   : {len(res.detected_utterances)} utterance(s) detected:")
+                for idx, u in enumerate(res.detected_utterances, 1):
+                    intent_str = u.get("intent", "N/A")
+                    slots_str = f" {u.get('slots')}" if u.get("slots") else ""
+                    print(f"      #{idx} [{u['start']:.1f}s-{u['end']:.1f}s]: \"{u['text']}\" -> {intent_str}{slots_str}")
+            print("-" * 75)
             sys.stdout.flush()
 
         return results
@@ -331,12 +416,12 @@ class DenoiserBenchmarkRunner:
 
 def print_comparison_markdown_table(all_results: Dict[str, Dict[str, EvaluationResult]]) -> None:
     """Prints a beautiful markdown table summarizing side-by-side results."""
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 90)
     print("                    SIDE-BY-SIDE BENCHMARK COMPARISON TABLE")
-    print("=" * 80)
+    print("=" * 90)
 
     header = (
-        "| Test Audio File | Condition | Transcript | WER | Conf | Consonant Status | Intent |\n"
+        "| Test Audio File | Condition | Transcript | WER | Conf | Consonants | Detected Intents |\n"
         "| :--- | :--- | :--- | :---: | :---: | :--- | :--- |"
     )
     print(header)
@@ -352,10 +437,13 @@ def print_comparison_markdown_table(all_results: Dict[str, Dict[str, EvaluationR
             else:
                 consonant_status = f"❌ Lost {res.missing_keywords}"
 
-            intent_str = f"{res.intent}" if res.intent != "N/A" else "-"
-            print(f"| `{file_name}` | {short_cond} | \"{tr}\" | {wer_str} | {conf_str} | {consonant_status} | {intent_str} |")
+            intents_summary = " ➔ ".join(
+                u.get("intent", "N/A") for u in res.detected_utterances
+            ) if res.detected_utterances else "-"
 
-    print("=" * 80 + "\n")
+            print(f"| `{file_name}` | {short_cond} | \"{tr}\" | {wer_str} | {conf_str} | {consonant_status} | {intents_summary} |")
+
+    print("=" * 90 + "\n")
     sys.stdout.flush()
 
 
@@ -368,10 +456,22 @@ def main():
         help="Optional audio files to test (if omitted, runs standard clinical benchmark dataset)",
     )
     parser.add_argument(
+        "--suite",
+        choices=["20s", "legacy", "all"],
+        default="20s",
+        help="Benchmark test suite: '20s' (new 20s Seeed mic ground truth, default), 'legacy' (older samples), or 'all'",
+    )
+    parser.add_argument(
         "--config",
         choices=list(CONFIGS),
         default=PRODUCTION_CONFIG,
         help="ASR configuration (default: vosk-grammar+freeform-log)",
+    )
+    parser.add_argument(
+        "--pause-threshold",
+        type=float,
+        default=0.8,
+        help="Pause gap threshold (seconds) to split multi-command audio into distinct utterances (default: 0.8s)",
     )
     parser.add_argument(
         "--no-nlu",
@@ -386,16 +486,29 @@ def main():
     )
     args = parser.parse_args()
 
-    runner = DenoiserBenchmarkRunner(config_name=args.config, run_nlu=not args.no_nlu)
+    runner = DenoiserBenchmarkRunner(
+        config_name=args.config,
+        run_nlu=not args.no_nlu,
+        pause_threshold=args.pause_threshold,
+    )
     all_results: Dict[str, Dict[str, EvaluationResult]] = {}
 
     if not args.files:
-        # Run standard 4 clinical benchmark cases
-        print(f"[*] Running standard clinical benchmark suite ({len(BENCHMARK_CASES)} cases)...")
-        for case in BENCHMARK_CASES:
+        if args.suite == "20s":
+            dataset = BENCHMARK_CASES_20S
+            suite_desc = "New 20-Second Clinical Ground Truth Dataset"
+        elif args.suite == "legacy":
+            dataset = BENCHMARK_CASES_LEGACY
+            suite_desc = "Legacy Short Audio Samples"
+        else:
+            dataset = BENCHMARK_CASES_20S + BENCHMARK_CASES_LEGACY
+            suite_desc = "Complete Benchmark Dataset (All Suites)"
+
+        print(f"[*] Running {suite_desc} ({len(dataset)} cases)...")
+        for case in dataset:
             p = case["path"]
             if not p.exists():
-                print(f"[!] Warning: File {p} not found, skipping.")
+                print(f"[!] Warning: File {p.name} not found, skipping.")
                 continue
             res = runner.process_file(
                 file_path=p,
@@ -415,10 +528,19 @@ def main():
 
         print(f"[*] Running custom batch on {len(target_files)} file(s)...")
         for f in target_files:
+            # Check if this file matches one of our known ground truths
+            matched_truth = ""
+            matched_kws = []
+            for c in BENCHMARK_CASES_20S + BENCHMARK_CASES_LEGACY:
+                if c["path"].name == f.name or c["id"] in f.stem:
+                    matched_truth = c["ground_truth"]
+                    matched_kws = c.get("key_words", [])
+                    break
+
             res = runner.process_file(
                 file_path=f,
-                ground_truth="",
-                expected_keywords=[],
+                ground_truth=matched_truth,
+                expected_keywords=matched_kws,
                 export_dir=args.export_wavs,
             )
             all_results[f.name] = res
@@ -429,4 +551,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
