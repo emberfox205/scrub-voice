@@ -85,6 +85,15 @@ def run_dsp_service(
     atten_lim_db: Optional[float] = 20.0,
     split_band_hz: Optional[float] = 2500.0,
     silence_hangover_sec: float = 1.5,
+    continuous_slope: bool = True,
+    f_low: float = 1000.0,
+    f_high: float = 3000.0,
+    atten_low_db: float = 12.0,
+    atten_high_db: float = 0.0,
+    dither_dbfs: Optional[float] = -65.0,
+    enable_snr_blend: bool = True,
+    snr_low_db: float = 8.0,
+    snr_high_db: float = 18.0,
 ) -> None:
     """Run the DSP streaming loop."""
     logger.info("Initializing DSP subsystems...")
@@ -114,11 +123,20 @@ def run_dsp_service(
                 threads=1,
                 atten_lim_db=atten_lim_db,
                 split_band_hz=split_band_hz,
+                continuous_slope=continuous_slope,
+                f_low=f_low,
+                f_high=f_high,
+                atten_low_db=atten_low_db,
+                atten_high_db=atten_high_db,
+                dither_dbfs=dither_dbfs,
+                enable_snr_blend=enable_snr_blend,
+                snr_low_db=snr_low_db,
+                snr_high_db=snr_high_db,
             )
             # Warmup denoiser
             _ = denoiser.enhance_chunk(dummy_multichannel[0])
             logger.info(
-                f"Stateful DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
+                f"Stateful DuoFilter ONNX denoiser initialized (continuous_slope={continuous_slope}, atten_low_db={atten_low_db} dB, dither={dither_dbfs} dBFS, snr_blend={enable_snr_blend})."
             )
         elif dtype == "duofilter_stateless":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
@@ -127,11 +145,20 @@ def run_dsp_service(
                 threads=1,
                 atten_lim_db=atten_lim_db,
                 split_band_hz=split_band_hz,
+                continuous_slope=continuous_slope,
+                f_low=f_low,
+                f_high=f_high,
+                atten_low_db=atten_low_db,
+                atten_high_db=atten_high_db,
+                dither_dbfs=dither_dbfs,
+                enable_snr_blend=enable_snr_blend,
+                snr_low_db=snr_low_db,
+                snr_high_db=snr_high_db,
             )
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
             logger.info(
-                f"Stateless DuoFilter ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
+                f"Stateless DuoFilter ONNX denoiser initialized (continuous_slope={continuous_slope}, atten_low_db={atten_low_db} dB, dither={dither_dbfs} dBFS, snr_blend={enable_snr_blend})."
             )
         elif dtype == "gtcrn":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "gtcrn_simple.onnx"
@@ -148,11 +175,20 @@ def run_dsp_service(
                 threads=1,
                 atten_lim_db=atten_lim_db,
                 split_band_hz=split_band_hz,
+                continuous_slope=continuous_slope,
+                f_low=f_low,
+                f_high=f_high,
+                atten_low_db=atten_low_db,
+                atten_high_db=atten_high_db,
+                dither_dbfs=dither_dbfs,
+                enable_snr_blend=enable_snr_blend,
+                snr_low_db=snr_low_db,
+                snr_high_db=snr_high_db,
             )
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
             logger.info(
-                f"DeepFilterNet ONNX denoiser initialized (atten_lim_db={atten_lim_db} dB, split_band_hz={split_band_hz} Hz)."
+                f"DeepFilterNet ONNX denoiser initialized (continuous_slope={continuous_slope}, atten_low_db={atten_low_db} dB, dither={dither_dbfs} dBFS, snr_blend={enable_snr_blend})."
             )
         else:
             raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'duofilter_stateless', 'gtcrn', 'deepfilter'")
@@ -235,7 +271,10 @@ def run_dsp_service(
                 # Mod 4: Neural Denoiser
                 if denoiser is not None:
                     if hasattr(denoiser, "enhance_chunk"):
-                        clean_chunk = denoiser.enhance_chunk(mono_audio)
+                        try:
+                            clean_chunk = denoiser.enhance_chunk(mono_audio, is_speech=is_speech)
+                        except TypeError:
+                            clean_chunk = denoiser.enhance_chunk(mono_audio)
                     else:
                         clean_chunk = denoiser.enhance(mono_audio)
                 else:
@@ -299,7 +338,49 @@ def main() -> None:
         default=1.5,
         help="Sustained silence duration (seconds) before DSP signals utterance end to ASR (default: 1.5s)",
     )
-    parser.set_defaults(denoise=True, spatial=True, realtime=True)
+    parser.add_argument(
+        "--f-low",
+        type=float,
+        default=1000.0,
+        help="Low frequency transition boundary (Hz) for continuous psychoacoustic slope (default: 1000.0 Hz)",
+    )
+    parser.add_argument(
+        "--f-high",
+        type=float,
+        default=3000.0,
+        help="High frequency pass-through boundary (Hz) for consonant preservation (default: 3000.0 Hz)",
+    )
+    parser.add_argument(
+        "--atten-low-db",
+        type=float,
+        default=12.0,
+        help="Low-frequency attenuation limit in dB for rumble cleanup (default: 12.0 dB)",
+    )
+    parser.add_argument(
+        "--atten-high-db",
+        type=float,
+        default=0.0,
+        help="High-frequency attenuation limit in dB (default: 0.0 dB for 100%% pass-through)",
+    )
+    parser.add_argument(
+        "--dither-dbfs",
+        type=float,
+        default=-65.0,
+        help="Micro-dither floor in dBFS for Kaldi CMVN stabilization (default: -65.0 dBFS)",
+    )
+    parser.add_argument(
+        "--no-continuous-slope",
+        dest="continuous_slope",
+        action="store_false",
+        help="Disable continuous slope and revert to legacy split-band filter",
+    )
+    parser.add_argument(
+        "--no-snr-blend",
+        dest="snr_blend",
+        action="store_false",
+        help="Disable soft-knee SNR dynamic blending",
+    )
+    parser.set_defaults(denoise=True, spatial=True, realtime=True, continuous_slope=True, snr_blend=True)
 
     args = parser.parse_args()
     run_dsp_service(
@@ -315,6 +396,13 @@ def main() -> None:
         atten_lim_db=args.atten_lim_db,
         split_band_hz=args.split_band_hz,
         silence_hangover_sec=args.silence_hangover_sec,
+        continuous_slope=args.continuous_slope,
+        f_low=args.f_low,
+        f_high=args.f_high,
+        atten_low_db=args.atten_low_db,
+        atten_high_db=args.atten_high_db,
+        dither_dbfs=args.dither_dbfs,
+        enable_snr_blend=args.snr_blend,
     )
 
 

@@ -45,6 +45,28 @@ from test.benchmarks.common.stats import corpus_wer, holm, intent_metrics, norm_
 from test.benchmarks.common.telemetry import ResourceSampler, hw_info
 
 
+def load_grammar(args, items) -> Optional[List[str]]:
+    if getattr(args, "grammar", None):
+        t = Path(args.grammar).read_text()
+        try:
+            g = json.loads(t)
+            return g if isinstance(g, list) else None
+        except Exception:
+            return [ln.strip() for ln in t.splitlines() if ln.strip()]
+    try:
+        from src.asr.vocab import vosk_grammar_phrases
+
+        phrases = vosk_grammar_phrases()
+        if phrases:
+            return phrases
+    except Exception:
+        pass
+    words = sorted({w for it in items for w in norm_text(it.text).split()})
+    if words:
+        return words + ["[unk]"]
+    return None
+
+
 @dataclass
 class Variant:
     name: str
@@ -65,6 +87,9 @@ def make_variants(args, reg: Registry) -> List[Variant]:
         Variant("ablate_bf_only", bf, "passthrough", asr),
         Variant("ablate_dn_only", "ref_channel", dn, asr),
     ]
+
+    if ok("dn", "duofilter_brickwall"):
+        v.append(Variant("base_shield_10db", bf, "duofilter_brickwall", asr))
 
     if getattr(args, "baselines", False):
         v += [
@@ -90,6 +115,8 @@ def run_utterance(reg: Registry, var: Variant, nlu, rig, mc: np.ndarray, sr: int
     bf, dn, asr = reg.get("bf", var.bf), reg.get("dn", var.dn), reg.get("asr", var.asr)
     n = int(chunk_s * sr)
     asr.reset()
+    if hasattr(dn, "reset"):
+        dn.reset()
     t_bf, t_dn, t_asr, outs, azs = [], [], [], [], []
 
     for c in chunk_iter(mc, n):
@@ -321,14 +348,7 @@ def main():
     except Exception as e:
         print(f"  [warn] Could not load RepoNLU ({e})")
 
-    grammar = None
-    if getattr(args, "grammar", None):
-        t = Path(args.grammar).read_text()
-        try:
-            grammar = json.loads(t)
-        except Exception:
-            grammar = [ln.strip() for ln in t.splitlines() if ln.strip()]
-
+    grammar = load_grammar(args, items)
     reg = Registry(args, mic_xy, grammar)
 
     rig = None

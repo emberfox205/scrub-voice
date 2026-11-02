@@ -1,0 +1,15 @@
+{"audio": "bench_clips/rec4_zoom_in_2x.wav", "text": "zoom in two times", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 2.0}, "azimuth": 90.0}
+{"audio": "bench_clips/rec4_zoom_out_2x.wav", "text": "zoom out two times", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "OUT", "factor": 2.0}, "azimuth": 90.0}
+{"audio": "bench_clips/rec4_next_slice_1.wav", "text": "next slice", "intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "NEXT"}, "azimuth": 90.0}
+{"audio": "bench_clips/rec4_next_slice_2.wav", "text": "next slice", "intent": "navigate_slice", "status": "EXECUTE", "slots": {"direction": "NEXT"}, "azimuth": 90.0}
+{"audio": "bench_clips/minh_zoom_in_2x.wav", "text": "zoom in two times", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 2.0}, "azimuth": 0.0}
+{"audio": "bench_clips/minh_zoom_in_3x.wav", "text": "zoom in three times", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 3.0}, "azimuth": 0.0}
+{"audio": "bench_clips/minh_zoom_in_14.wav", "text": "zoom in fourteen", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 14.0}, "azimuth": 0.0}
+{"audio": "bench_clips/mix_zoom_slice.wav", "text": "zoom in two times zoom out three times next slice", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 2.0}, "azimuth": 45.0}
+{"audio": "recording_4.wav", "text": "zoom in two times zoom out two times next slice next slice", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 2.0}, "azimuth": 90.0}
+{"audio": "test_Minh_voice.wav", "text": "zoom in two times zoom in three times zoom in fourteen", "intent": "zoom_display", "status": "EXECUTE", "slots": {"direction": "IN", "factor": 2.0}, "azimuth": 0.0}
+{"audio": "sample_01.wav", "azimuth": 0.0}
+{"audio": "sample_02.wav", "azimuth": 60.0}
+{"audio": "sample_03.wav", "azimuth": 120.0}
+{"audio": "sample_04.wav", "azimuth": 180.0}
+{"audio": "sample_05.wav", "azimuth": 240.0}

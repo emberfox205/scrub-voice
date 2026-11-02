@@ -163,11 +163,19 @@ class PluginBeamformer:
 
 
 class PluginDenoiser:
-    def __init__(self, obj: Any):
-        self.o, self.name = obj, "repo_denoiser"
+    def __init__(self, obj: Any, name: str = "repo_denoiser"):
+        self.o, self.name = obj, name
+
+    def reset(self):
+        if hasattr(self.o, "reset_states"):
+            self.o.reset_states()
+        elif hasattr(self.o, "reset"):
+            self.o.reset()
 
     def process(self, x: np.ndarray, sr: int = 16000):
-        if hasattr(self.o, "enhance"):
+        if hasattr(self.o, "enhance_chunk") and len(x) == getattr(self.o, "chunk_samples", 8000):
+            out = self.o.enhance_chunk(x)
+        elif hasattr(self.o, "enhance"):
             out = self.o.enhance(x, sample_rate=sr)
         else:
             try:
@@ -315,17 +323,30 @@ class Registry:
                 return NoiseReduceDenoiser()
             if name == "deepfilternet":
                 return DeepFilterNetDenoiser()
+            if name == "duofilter_brickwall":
+                try:
+                    from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
+                    return PluginDenoiser(
+                        DuoFilterStreamingDenoiser(
+                            continuous_slope=False,
+                            split_band_hz=2500.0,
+                            atten_lim_db=10.0,
+                        ),
+                        name="duofilter_brickwall",
+                    )
+                except Exception:
+                    return None
             if name == "repo_denoiser":
                 if name in self.plugins:
                     return PluginDenoiser(self._plugin(name))
-                # Fallback to repo DuoFilter
+                # Fallback to repo DuoFilter with Continuous Slope
                 try:
                     from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
-                    return PluginDenoiser(DuoFilterStreamingDenoiser())
+                    return PluginDenoiser(DuoFilterStreamingDenoiser(continuous_slope=True), name="repo_denoiser")
                 except Exception:
                     try:
                         from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
-                        return PluginDenoiser(DuoFilterDenoiser())
+                        return PluginDenoiser(DuoFilterDenoiser(continuous_slope=True), name="repo_denoiser")
                     except Exception:
                         return SpectralGate()
         elif kind == "asr":

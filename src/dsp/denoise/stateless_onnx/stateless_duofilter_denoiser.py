@@ -9,6 +9,11 @@ import numpy as np
 import onnxruntime as ort
 import soundfile as sf
 import torch
+
+from src.dsp.denoise.continuous_slope_denoiser import (
+    ContinuousSlopeGainFloor,
+    SoftKneeSNRBlender,
+)
 import torchaudio
 from torch import Tensor
 
@@ -107,6 +112,16 @@ class DuoFilterDenoiser:
         lookback_samples: int = 2048,
         atten_lim_db: Optional[float] = 20.0,
         split_band_hz: Optional[float] = 2500.0,
+        continuous_slope: bool = True,
+        f_low: float = 1000.0,
+        f_high: float = 3000.0,
+        atten_low_db: float = 12.0,
+        atten_high_db: float = 0.0,
+        dither_dbfs: Optional[float] = -65.0,
+        enable_snr_blend: bool = True,
+        snr_low_db: float = 8.0,
+        snr_high_db: float = 18.0,
+        phase_preservation: bool = True,
     ):
         if model_path is None:
             model_path = self.DEFAULT_ONNX_PATH
@@ -118,24 +133,57 @@ class DuoFilterDenoiser:
         self.lookback_samples = lookback_samples
         self.atten_lim_db = atten_lim_db
         self.split_band_hz = split_band_hz
+        self.continuous_slope = continuous_slope
+        self.f_low = f_low
+        self.f_high = f_high
+        self.atten_low_db = atten_low_db
+        self.atten_high_db = atten_high_db
+        self.default_phase_preservation = phase_preservation
+        self.enable_snr_blend = enable_snr_blend
 
-        # Precompute Split-Band Consonant Shield weights if enabled
         n_bins = self.n_fft // 2 + 1
-        if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
-            bin_hz = self.sample_rate / self.n_fft
-            split_bin = int(round(self.split_band_hz / bin_hz))
-            transition_bins = 8
-            half_trans = max(1, transition_bins // 2)
-            start_bin = max(0, split_bin - half_trans)
-            end_bin = min(n_bins, split_bin + half_trans)
 
-            weights = torch.ones(n_bins, dtype=torch.float32)
-            if start_bin < end_bin:
-                weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
-            weights[end_bin:] = 0.0
-            self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, 1, n_bins)
-        else:
+        if self.continuous_slope:
+            slope_atten_low = self.atten_low_db
+            if atten_lim_db is not None and atten_lim_db != 20.0 and atten_low_db == 12.0:
+                slope_atten_low = atten_lim_db
+            self.gain_floor_builder = ContinuousSlopeGainFloor(
+                n_fft=self.n_fft,
+                sample_rate=self.sample_rate,
+                f_low=self.f_low,
+                f_high=self.f_high,
+                atten_low_db=slope_atten_low,
+                atten_high_db=self.atten_high_db,
+            )
+            self.gain_floor = self.gain_floor_builder.get_torch_floor((1, 1, n_bins))
             self.split_weights = None
+        else:
+            self.gain_floor = None
+            # Precompute Split-Band Consonant Shield weights if enabled
+            if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+                bin_hz = self.sample_rate / self.n_fft
+                split_bin = int(round(self.split_band_hz / bin_hz))
+                transition_bins = 8
+                half_trans = max(1, transition_bins // 2)
+                start_bin = max(0, split_bin - half_trans)
+                end_bin = min(n_bins, split_bin + half_trans)
+
+                weights = torch.ones(n_bins, dtype=torch.float32)
+                if start_bin < end_bin:
+                    weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+                weights[end_bin:] = 0.0
+                self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, 1, n_bins)
+            else:
+                self.split_weights = None
+
+        self.dither_dbfs = dither_dbfs
+        self.dither_std: Optional[float] = (
+            10.0 ** (dither_dbfs / 20.0) if dither_dbfs is not None else None
+        )
+        self.snr_blender = SoftKneeSNRBlender(
+            snr_low_db=snr_low_db,
+            snr_high_db=snr_high_db,
+        )
 
         if not self.model_path.exists():
             raise FileNotFoundError(f"DuoFilter ONNX model not found at {self.model_path}")
@@ -187,7 +235,7 @@ class DuoFilterDenoiser:
         self,
         audio: np.ndarray,
         sample_rate: Optional[int] = None,
-        phase_preservation: bool = False,
+        phase_preservation: Optional[bool] = None,
         channel_idx: int = 0,
         streaming: bool = False,
     ) -> np.ndarray:
@@ -257,29 +305,45 @@ class DuoFilterDenoiser:
         if T < TARGET_FRAMES:
             enhanced_stft = enhanced_stft[:, :, :T, :]
 
-        # Minimum Gain Floor Clamping: clamp over-suppressed bins to authentic input floor
-        if self.atten_lim_db is not None and self.atten_lim_db < 100.0:
-            min_gain = 10.0 ** (-self.atten_lim_db / 20.0)
+        if self.continuous_slope and self.gain_floor is not None:
+            # Pillar 1 & 2: Continuous Psychoacoustic Slope + Strict Phase Preservation
             noisy_mag = torch.sqrt(noisy_stft[:, 0] ** 2 + noisy_stft[:, 1] ** 2 + 1e-12)
             enh_mag = torch.sqrt(enhanced_stft[:, 0] ** 2 + enhanced_stft[:, 1] ** 2 + 1e-12)
-            floor_mag = min_gain * noisy_mag
+            floor_mag = self.gain_floor.to(device=enh_mag.device) * noisy_mag
+            effective_mag = torch.maximum(enh_mag, floor_mag)
 
-            below_floor = (enh_mag < floor_mag).unsqueeze(1)
-            floor_stft = min_gain * noisy_stft
-            enhanced_stft = torch.where(below_floor, floor_stft, enhanced_stft)
+            use_phase = phase_preservation if phase_preservation is not None else self.default_phase_preservation
+            if use_phase:
+                unit_real = noisy_stft[:, 0] / noisy_mag
+                unit_imag = noisy_stft[:, 1] / noisy_mag
+                enhanced_stft = torch.stack([effective_mag * unit_real, effective_mag * unit_imag], dim=1)
+            else:
+                scale = effective_mag / (enh_mag + 1e-12)
+                enhanced_stft = enhanced_stft * scale.unsqueeze(1)
+        else:
+            # Minimum Gain Floor Clamping: clamp over-suppressed bins to authentic input floor
+            if self.atten_lim_db is not None and self.atten_lim_db < 100.0:
+                min_gain = 10.0 ** (-self.atten_lim_db / 20.0)
+                noisy_mag = torch.sqrt(noisy_stft[:, 0] ** 2 + noisy_stft[:, 1] ** 2 + 1e-12)
+                enh_mag = torch.sqrt(enhanced_stft[:, 0] ** 2 + enhanced_stft[:, 1] ** 2 + 1e-12)
+                floor_mag = min_gain * noisy_mag
 
-        # Split-Band Consonant Shield: Preserve raw/beamformed audio in high frequencies (> split_band_hz)
-        if self.split_weights is not None:
-            enhanced_stft = self.split_weights * enhanced_stft + (1.0 - self.split_weights) * noisy_stft
+                below_floor = (enh_mag < floor_mag).unsqueeze(1)
+                floor_stft = min_gain * noisy_stft
+                enhanced_stft = torch.where(below_floor, floor_stft, enhanced_stft)
 
-        # Optional Phase Preservation: Use magnitude from model + original noisy phase
-        if phase_preservation:
-            spec_noisy = torch.complex(noisy_stft[:, 0].float(), noisy_stft[:, 1].float())
-            spec_enh = torch.complex(enhanced_stft[:, 0].float(), enhanced_stft[:, 1].float())
-            noisy_phase = torch.angle(spec_noisy)
-            enh_mag = torch.clamp(spec_enh.abs(), min=1e-8)
-            mag_only_complex = enh_mag * torch.exp(1j * noisy_phase)
-            enhanced_stft = torch.stack([mag_only_complex.real, mag_only_complex.imag], dim=1)
+            # Split-Band Consonant Shield: Preserve raw/beamformed audio in high frequencies (> split_band_hz)
+            if self.split_weights is not None:
+                enhanced_stft = self.split_weights * enhanced_stft + (1.0 - self.split_weights) * noisy_stft
+
+            # Optional Phase Preservation: Use magnitude from model + original noisy phase
+            if phase_preservation:
+                spec_noisy = torch.complex(noisy_stft[:, 0].float(), noisy_stft[:, 1].float())
+                spec_enh = torch.complex(enhanced_stft[:, 0].float(), enhanced_stft[:, 1].float())
+                noisy_phase = torch.angle(spec_noisy)
+                enh_mag = torch.clamp(spec_enh.abs(), min=1e-8)
+                mag_only_complex = enh_mag * torch.exp(1j * noisy_phase)
+                enhanced_stft = torch.stack([mag_only_complex.real, mag_only_complex.imag], dim=1)
 
         # Continuous iSTFT across full spectrogram
         enh_wav = stft_to_wav(
@@ -294,12 +358,26 @@ class DuoFilterDenoiser:
         if pad_samples > 0:
             enh_wav = enh_wav[..., :target_len]
 
-        return enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+        clean_out = enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+
+        # Pillar 3: Micro-Dither Injection (-65 dBFS floor)
+        if self.dither_std is not None and self.dither_std > 0:
+            dither = np.random.normal(0.0, self.dither_std, size=clean_out.shape).astype(np.float32)
+            clean_out = clean_out + dither
+
+        # Pillar 4: Soft-Knee SNR Dynamic Blend
+        if self.enable_snr_blend:
+            clean_out, _, _ = self.snr_blender.blend(
+                denoised=clean_out,
+                beamformed=audio_mono[:target_len],
+            )
+
+        return clean_out.astype(np.float32)
 
     def stream_enhance(
         self,
         chunk: np.ndarray,
-        phase_preservation: bool = False,
+        phase_preservation: Optional[bool] = None,
     ) -> np.ndarray:
         """
         Streaming enhancement with Lookback Warm-up Buffer.
