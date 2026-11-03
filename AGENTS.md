@@ -20,5 +20,6 @@ Consult the guides in `docs/` whenever relevant to your current task:
 * `docs/BENCHMARK_GUIDE.md`: Modular benchmark suite execution, runner hierarchy, and operational workflows.
 * `docs/BENCHMARK_IDEAS_AND_SPECIFICATION.md`: Theoretical framework, acoustic simulation, math formulations, and experimental specs.
 * `docs/TESTING_AND_DEBUG_GUIDE.md`: Developer testing manual, audio listening, edge verification, and troubleshooting.
+* `docs/BENCHMARK_SUITE_GUIDE.md`: Modular benchmark runners, architectural budgets, and statistical reporting.
 * `docs/AUDIO_GUIDE.md`: Multi-mic hardware audio recording, ALSA mixer tuning, and playback.
 * `docs/GITHUB_WORKFLOW.md`: Git branching, commit guidelines, and PR workflow.

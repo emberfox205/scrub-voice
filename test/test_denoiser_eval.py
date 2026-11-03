@@ -14,7 +14,9 @@ Key Invariants:
    distinct command utterances by silence pauses and evaluates NLU intents for each.
 4. Ground Truth Evaluation: Calculates Word Error Rate (WER), keyword hit rate,
    phonetic consonant preservation (e.g., /θ/ in 'three' vs 'ray'), and NLU intent matches.
+
 """
+
 
 from __future__ import annotations
 
@@ -35,6 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import soundfile as sf
+import torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -277,6 +280,14 @@ class DenoiserBenchmarkRunner:
         self.denoiser_dialed_10db = DuoFilterStreamingDenoiser(atten_lim_db=10.0, split_band_hz=None)
         # Condition E: Split-Band Shield @ 10dB
         self.denoiser_shield_10db = DuoFilterStreamingDenoiser(atten_lim_db=10.0, split_band_hz=2500.0)
+        # Condition F: Continuous Psychoacoustic Slope & Hybrid Denoiser (Ours: 4 Pillars)
+        self.denoiser_continuous_slope = DuoFilterStreamingDenoiser(
+            continuous_slope=True,
+            atten_low_db=12.0,
+            atten_high_db=0.0,
+            dither_dbfs=-65.0,
+            enable_snr_blend=True,
+        )
         print(" done.\n", flush=True)
 
     def evaluate_audio(
@@ -369,6 +380,7 @@ class DenoiserBenchmarkRunner:
         clean_new_shield = self.denoiser_new_shield.enhance(beamformed)
         clean_dialed_10db = self.denoiser_dialed_10db.enhance(beamformed)
         clean_shield_10db = self.denoiser_shield_10db.enhance(beamformed)
+        clean_continuous_slope = self.denoiser_continuous_slope.enhance(beamformed)
 
         # Optionally export WAVs for acoustic listening
         if export_dir:
@@ -379,6 +391,7 @@ class DenoiserBenchmarkRunner:
             sf.write(str(export_dir / f"{stem}_3_new_shield_20db.wav"), clean_new_shield, 16000)
             sf.write(str(export_dir / f"{stem}_4_dialed_10db.wav"), clean_dialed_10db, 16000)
             sf.write(str(export_dir / f"{stem}_5_shield_10db.wav"), clean_shield_10db, 16000)
+            sf.write(str(export_dir / f"{stem}_6_continuous_slope.wav"), clean_continuous_slope, 16000)
 
         # 3. Transcribe and evaluate each condition
         conditions = [
@@ -387,6 +400,7 @@ class DenoiserBenchmarkRunner:
             ("Denoised New (Consonant Shield @ 2.5kHz, 20dB)", clean_new_shield),
             ("Denoised Dialed-Back (Full-Band @ 10dB)", clean_dialed_10db),
             ("Denoised Shield + 10dB (Shield @ 2.5kHz, 10dB)", clean_shield_10db),
+            ("Denoised Continuous Slope (4 Pillars)", clean_continuous_slope),
         ]
 
         results = {}
@@ -550,4 +564,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--unittest" in sys.argv:
+        import unittest
+        sys.argv.remove("--unittest")
+        unittest.main(module="test.test_continuous_slope")
+    else:
+        main()

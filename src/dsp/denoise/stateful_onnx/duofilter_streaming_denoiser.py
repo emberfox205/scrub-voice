@@ -10,6 +10,10 @@ import onnxruntime as ort
 import soundfile as sf
 import torch
 
+from src.dsp.denoise.continuous_slope_denoiser import (
+    ContinuousSlopeGainFloor,
+    SoftKneeSNRBlender,
+)
 CURRENT_DIR = Path(__file__).resolve().parent
 DENOISE_DIR = CURRENT_DIR.parent
 REPO_ROOT = CURRENT_DIR.parents[3]
@@ -20,6 +24,12 @@ class DuoFilterStreamingDenoiser:
     """
     Stateful streaming DuoFilter ONNX inference engine configured for 0.5s chunks (8,000 samples).
     Matches the system-wide chunk specification of scrub-voice (AudioStreamer, Silero VAD, DAS Beamformer).
+
+    Enhanced with the 4-Pillar Continuous Psychoacoustic Slope & Hybrid Architecture:
+      1. Continuous Psychoacoustic Slope (-12 dB -> -6 dB -> 0 dB smooth cosine curve)
+      2. Strict Magnitude-Only Phase Preservation (100% Delay-and-Sum beamformed phase)
+      3. Micro-Dither Injection (-65 dBFS noise floor to stabilize Kaldi CMVN variance)
+      4. Soft-Knee SNR Dynamic Blend (automatic auto-tuning between loud speech and pauses)
     """
 
     def __init__(
@@ -33,6 +43,16 @@ class DuoFilterStreamingDenoiser:
         threads: int = 1,
         atten_lim_db: Optional[float] = 20.0,
         split_band_hz: Optional[float] = 2500.0,
+        continuous_slope: bool = True,
+        f_low: float = 1000.0,
+        f_high: float = 3000.0,
+        atten_low_db: float = 12.0,
+        atten_high_db: float = 0.0,
+        dither_dbfs: Optional[float] = -65.0,
+        enable_snr_blend: bool = True,
+        snr_low_db: float = 8.0,
+        snr_high_db: float = 18.0,
+        phase_preservation: bool = True,
     ):
         if model_path is None:
             self.model_path = DEFAULT_MODEL_PATH
@@ -50,26 +70,67 @@ class DuoFilterStreamingDenoiser:
         self.hop_length = hop_length
         self.win_length = win_length
         self.chunk_samples = chunk_samples
-        self.atten_lim_db = atten_lim_db
+
+        self.continuous_slope = continuous_slope
+        self.f_low = f_low
+        self.f_high = f_high
+        self.atten_low_db = atten_low_db
+        self.atten_high_db = atten_high_db
+        self.phase_preservation = phase_preservation
+        self.enable_snr_blend = enable_snr_blend
+
+        # Legacy parameters support
+        self.atten_lim_db = atten_lim_db if atten_lim_db is not None else 20.0
         self.split_band_hz = split_band_hz
 
-        # Precompute Split-Band Consonant Shield weights if enabled
         n_bins = self.n_fft // 2 + 1
-        if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
-            bin_hz = self.sample_rate / self.n_fft
-            split_bin = int(round(self.split_band_hz / bin_hz))
-            transition_bins = 8
-            half_trans = max(1, transition_bins // 2)
-            start_bin = max(0, split_bin - half_trans)
-            end_bin = min(n_bins, split_bin + half_trans)
 
-            weights = torch.ones(n_bins, dtype=torch.float32)
-            if start_bin < end_bin:
-                weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
-            weights[end_bin:] = 0.0
-            self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, 1, n_bins)
-        else:
+        if self.continuous_slope:
+            # Pillar 1: Precompute Continuous Psychoacoustic Slope curve
+            slope_atten_low = self.atten_low_db
+            if atten_lim_db is not None and atten_lim_db != 20.0 and atten_low_db == 12.0:
+                slope_atten_low = atten_lim_db
+
+            self.gain_floor_builder = ContinuousSlopeGainFloor(
+                n_fft=self.n_fft,
+                sample_rate=self.sample_rate,
+                f_low=self.f_low,
+                f_high=self.f_high,
+                atten_low_db=slope_atten_low,
+                atten_high_db=self.atten_high_db,
+            )
+            self.gain_floor = self.gain_floor_builder.get_torch_floor((1, 1, n_bins))
             self.split_weights = None
+        else:
+            self.gain_floor = None
+            # Precompute legacy Split-Band Consonant Shield weights
+            if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+                bin_hz = self.sample_rate / self.n_fft
+                split_bin = int(round(self.split_band_hz / bin_hz))
+                transition_bins = 8
+                half_trans = max(1, transition_bins // 2)
+                start_bin = max(0, split_bin - half_trans)
+                end_bin = min(n_bins, split_bin + half_trans)
+
+                weights = torch.ones(n_bins, dtype=torch.float32)
+                if start_bin < end_bin:
+                    weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+                weights[end_bin:] = 0.0
+                self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, 1, n_bins)
+            else:
+                self.split_weights = None
+
+        # Pillar 3: Micro-dither floor parameter
+        self.dither_dbfs = dither_dbfs
+        self.dither_std: Optional[float] = (
+            10.0 ** (dither_dbfs / 20.0) if dither_dbfs is not None else None
+        )
+
+        # Pillar 4: Soft-knee SNR blender
+        self.snr_blender = SoftKneeSNRBlender(
+            snr_low_db=snr_low_db,
+            snr_high_db=snr_high_db,
+        )
 
         # Square-root Hann window satisfies COLA condition with 50% overlap
         self.window = torch.hann_window(self.win_length).pow(0.5)
@@ -98,18 +159,24 @@ class DuoFilterStreamingDenoiser:
         self.reset_states()
 
     def reset_states(self) -> None:
-        """Reset internal streaming caches to zeros."""
+        """Reset internal streaming caches and SNR estimator to zeros."""
         self.states: Dict[str, np.ndarray] = {
             name: np.zeros(shape, dtype=np.float32) for name, shape in self.cache_shapes.items()
         }
+        self.snr_blender.reset()
 
-    def enhance_chunk(self, chunk: np.ndarray) -> np.ndarray:
+    def enhance_chunk(
+        self,
+        chunk: np.ndarray,
+        is_speech: Optional[bool] = None,
+    ) -> np.ndarray:
         """
         Enhance a single 0.5s audio chunk (8,000 samples @ 16 kHz).
         Directly drop-in compatible with run_dsp.py streaming loop.
         
         Args:
             chunk: 1D float32 numpy array of length 8000.
+            is_speech: Optional bool indicator from VAD for adaptive noise tracking.
         Returns:
             clean_chunk: 1D float32 numpy array of length 8000.
         """
@@ -120,7 +187,8 @@ class DuoFilterStreamingDenoiser:
         if target_len == 0:
             return np.zeros(0, dtype=np.float32)
 
-        wav_t = torch.from_numpy(chunk.astype(np.float32)).unsqueeze(0)
+        raw_chunk = chunk.astype(np.float32)
+        wav_t = torch.from_numpy(raw_chunk).unsqueeze(0)
 
         # STFT on the chunk: 8000 samples -> [1, 257, 32]
         spec = torch.stft(
@@ -149,27 +217,38 @@ class DuoFilterStreamingDenoiser:
 
         enh_stft_t = torch.from_numpy(enh_stft)
 
-        # Minimum Gain Floor Clamping: clamp over-suppressed bins to authentic input floor
-        if self.atten_lim_db is not None and self.atten_lim_db < 100.0:
-            min_gain = 10.0 ** (-self.atten_lim_db / 20.0)
-
-            # Magnitudes: [1, T, 257]
+        if self.continuous_slope and self.gain_floor is not None:
+            # Pillar 1 & 2: Continuous Psychoacoustic Slope + Strict Phase Preservation
             noisy_mag = torch.sqrt(stft[:, 0] ** 2 + stft[:, 1] ** 2 + 1e-12)
             enh_mag = torch.sqrt(enh_stft_t[:, 0] ** 2 + enh_stft_t[:, 1] ** 2 + 1e-12)
-            floor_mag = min_gain * noisy_mag
 
-            # Identify bins where denoiser suppressed deeper than the allowed limit
-            below_floor = (enh_mag < floor_mag).unsqueeze(1)  # [1, 1, T, 257]
-            floor_stft = min_gain * stft
+            floor_mag = self.gain_floor.to(device=enh_mag.device) * noisy_mag
+            effective_mag = torch.maximum(enh_mag, floor_mag)
 
-            # Replace over-suppressed bins with the genuine physical input floor
-            # preserving authentic room acoustics and natural phase for ASR
-            enh_stft_t = torch.where(below_floor, floor_stft, enh_stft_t)
+            if self.phase_preservation:
+                # Recombine 100% authentic Delay-and-Sum beamformed phase
+                unit_real = stft[:, 0] / noisy_mag
+                unit_imag = stft[:, 1] / noisy_mag
+                out_real = effective_mag * unit_real
+                out_imag = effective_mag * unit_imag
+                enh_stft_t = torch.stack([out_real, out_imag], dim=1)
+            else:
+                scale = effective_mag / (enh_mag + 1e-12)
+                enh_stft_t = enh_stft_t * scale.unsqueeze(1)
+        else:
+            # Legacy branch: Minimum Gain Floor Clamping + Split-Band Consonant Shield
+            if self.atten_lim_db is not None and self.atten_lim_db < 100.0:
+                min_gain = 10.0 ** (-self.atten_lim_db / 20.0)
+                noisy_mag = torch.sqrt(stft[:, 0] ** 2 + stft[:, 1] ** 2 + 1e-12)
+                enh_mag = torch.sqrt(enh_stft_t[:, 0] ** 2 + enh_stft_t[:, 1] ** 2 + 1e-12)
+                floor_mag = min_gain * noisy_mag
 
-        # Split-Band Consonant Shield: Preserve beamformed audio in high frequencies (> split_band_hz)
-        # to ensure unvoiced consonants (/s/, /f/, /t/, /k/) are completely protected for ASR
-        if self.split_weights is not None:
-            enh_stft_t = self.split_weights * enh_stft_t + (1.0 - self.split_weights) * stft
+                below_floor = (enh_mag < floor_mag).unsqueeze(1)
+                floor_stft = min_gain * stft
+                enh_stft_t = torch.where(below_floor, floor_stft, enh_stft_t)
+
+            if self.split_weights is not None:
+                enh_stft_t = self.split_weights * enh_stft_t + (1.0 - self.split_weights) * stft
 
         # iSTFT synthesis
         enh_complex = torch.complex(
@@ -187,7 +266,22 @@ class DuoFilterStreamingDenoiser:
             length=target_len,
         )
 
-        return enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+        clean_out = enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+
+        # Pillar 3: Micro-Dither Injection (-65 dBFS floor)
+        if self.dither_std is not None and self.dither_std > 0:
+            dither = np.random.normal(0.0, self.dither_std, size=clean_out.shape).astype(np.float32)
+            clean_out = clean_out + dither
+
+        # Pillar 4: Soft-Knee SNR Dynamic Blend
+        if self.enable_snr_blend:
+            clean_out, alpha, snr_db = self.snr_blender.blend(
+                denoised=clean_out,
+                beamformed=raw_chunk,
+                is_speech=is_speech,
+            )
+
+        return clean_out.astype(np.float32)
 
     def enhance(self, audio: np.ndarray, sample_rate: Optional[int] = None) -> np.ndarray:
         """
@@ -199,8 +293,11 @@ class DuoFilterStreamingDenoiser:
         total_samples = len(audio)
         if sample_rate is not None and sample_rate != self.sample_rate:
             import torchaudio
+
             wav_t = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
-            resampled = torchaudio.functional.resample(wav_t, orig_freq=sample_rate, new_freq=self.sample_rate)
+            resampled = torchaudio.functional.resample(
+                wav_t, orig_freq=sample_rate, new_freq=self.sample_rate
+            )
             audio = resampled.squeeze(0).numpy()
             total_samples = len(audio)
 
@@ -210,8 +307,6 @@ class DuoFilterStreamingDenoiser:
         for start in range(0, total_samples, self.chunk_samples):
             end = min(start + self.chunk_samples, total_samples)
             chunk = audio[start:end]
-
-            # If tail chunk is shorter, it processes with dynamic ONNX axes seamlessly
             clean_chunk = self.enhance_chunk(chunk)
             clean_chunks.append(clean_chunk)
 
@@ -244,7 +339,9 @@ class DuoFilterStreamingDenoiser:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Stateful 0.5s Chunk DuoFilter Speech Enhancement")
+    parser = argparse.ArgumentParser(
+        description="Stateful 0.5s Chunk DuoFilter with Continuous Psychoacoustic Slope & Hybrid Denoiser"
+    )
     parser.add_argument(
         "--input",
         type=str,
@@ -275,13 +372,56 @@ if __name__ == "__main__":
         default=2500.0,
         help="Split-band frequency in Hz (default: 2500.0 to shield consonants for ASR, or 0 / >= 8000 to disable)",
     )
+    parser.add_argument(
+        "--f-low",
+        type=float,
+        default=1000.0,
+        help="Low frequency boundary in Hz for deep cleaning (default: 1000 Hz)",
+    )
+    parser.add_argument(
+        "--f-high",
+        type=float,
+        default=3000.0,
+        help="High frequency boundary in Hz for unmolested pass-through (default: 3000 Hz)",
+    )
+    parser.add_argument(
+        "--atten-low-db",
+        type=float,
+        default=12.0,
+        help="Attenuation limit below f_low in dB (default: 12.0 dB)",
+    )
+    parser.add_argument(
+        "--dither-dbfs",
+        type=float,
+        default=-65.0,
+        help="Micro-dither floor in dBFS (default: -65.0 dBFS)",
+    )
+    parser.add_argument(
+        "--no-continuous-slope",
+        dest="continuous_slope",
+        action="store_false",
+        help="Disable continuous slope and revert to legacy split-band filter",
+    )
+    parser.add_argument(
+        "--no-snr-blend",
+        dest="snr_blend",
+        action="store_false",
+        help="Disable soft-knee SNR dynamic blending",
+    )
+    parser.set_defaults(continuous_slope=True, snr_blend=True)
     args = parser.parse_args()
 
     denoiser = DuoFilterStreamingDenoiser(
         model_path=args.model,
         atten_lim_db=args.atten_lim_db,
         split_band_hz=args.split_band_hz,
+        continuous_slope=args.continuous_slope,
+        f_low=args.f_low,
+        f_high=args.f_high,
+        atten_low_db=args.atten_low_db,
+        dither_dbfs=args.dither_dbfs,
+        enable_snr_blend=args.snr_blend,
     )
     out_file, rtf = denoiser.enhance_file(args.input, args.output)
-    print(f"[0.5s Chunk DuoFilter] Enhanced audio saved to: {out_file}")
-    print(f"[0.5s Chunk DuoFilter] Real-Time Factor (RTF): {rtf:.4f}")
+    print(f"[Continuous Slope DuoFilter] Enhanced audio saved to: {out_file}")
+    print(f"[Continuous Slope DuoFilter] Real-Time Factor (RTF): {rtf:.4f}")
