@@ -40,7 +40,10 @@ if str(REPO_ROOT / "src") not in sys.path:
 from src.dsp.source.beamformer import DASBeamformer
 from src.dsp.source.localizer import SRPLocalizer
 from src.dsp.source.vad import SileroVAD
-from src.dsp.denoise.pi_reference_duofilter import DuoFilterDenoiser
+try:
+    from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser as DuoFilterDenoiser
+except ImportError:
+    from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser  # type: ignore
 from test.benchmarks.common.acoustics import simulate_array, NoiseSource, save_audio
 
 
