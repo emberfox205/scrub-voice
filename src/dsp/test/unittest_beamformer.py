@@ -24,7 +24,7 @@ def make_simulated_source(bf: DASBeamformer, angle_deg: float, num_samples: int 
         audio: np.ndarray of shape (6, num_samples), float32
         source: np.ndarray of shape (num_samples,), float32 (clean reference)
     """    
-    t = np.arange(num_samples) / bf.sample_rate
+    t = np.arange(num_samples) / bf.framing.sample_rate
     angle_rad = np.deg2rad(angle_deg)
 
     # Broadband signal (speech frequency range 200 Hz - 3500 Hz)
@@ -33,11 +33,11 @@ def make_simulated_source(bf: DASBeamformer, angle_deg: float, num_samples: int 
 
     # Apply per-microphone phase delay in frequency domain
     S = np.fft.rfft(source)
-    freqs = np.fft.rfftfreq(num_samples, 1.0 / bf.sample_rate)
+    freqs = np.fft.rfftfreq(num_samples, 1.0 / bf.framing.sample_rate)
 
-    audio = np.zeros((bf.num_mics, num_samples), dtype=np.float64)
-    for m in range(bf.num_mics):
-        tau = -(bf.radius / bf.speed_of_sound) * np.cos(angle_rad - bf.mic_angles_rad[m])
+    audio = np.zeros((bf.geometry.num_mics, num_samples), dtype=np.float64)
+    for m in range(bf.geometry.num_mics):
+        tau = -(bf.geometry.radius / bf.geometry.speed_of_sound) * np.cos(angle_rad - bf.geometry.mic_angles_rad[m])
         audio[m] = np.fft.irfft(S * np.exp(-1j * 2 * np.pi * freqs * tau), n=num_samples)
 
     return audio.astype(np.float32), source.astype(np.float32)

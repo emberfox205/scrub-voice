@@ -24,8 +24,8 @@ from source.localizer import SRPLocalizer
 # ============================================================
 def make_source(loc, angle_deg, snr_db=20.0):
     """Generate 6-channel synthetic audio for a sound source at angle_deg."""
-    n = int(0.5 * loc.sample_rate)
-    t = np.arange(n) / loc.sample_rate
+    n = int(0.5 * loc.framing.sample_rate)
+    t = np.arange(n) / loc.framing.sample_rate
     angle_rad = np.deg2rad(angle_deg)
 
     # Multi-harmonic speech-like signal (200 - 3400 Hz)
@@ -37,11 +37,11 @@ def make_source(loc, angle_deg, snr_db=20.0):
 
     # Apply per-mic fractional delays
     S = np.fft.rfft(source)
-    freqs = np.fft.rfftfreq(n, 1.0 / loc.sample_rate)
-    audio = np.zeros((loc.num_mics, n), dtype=np.float64)
+    freqs = np.fft.rfftfreq(n, 1.0 / loc.framing.sample_rate)
+    audio = np.zeros((loc.geometry.num_mics, n), dtype=np.float64)
 
-    for m in range(loc.num_mics):
-        tau = -(loc.radius / loc.speed_of_sound) * np.cos(angle_rad - loc.mic_angles_rad[m])
+    for m in range(loc.geometry.num_mics):
+        tau = -(loc.geometry.radius / loc.geometry.speed_of_sound) * np.cos(angle_rad - loc.geometry.mic_angles_rad[m])
         audio[m] = np.fft.irfft(S * np.exp(-1j * 2 * np.pi * freqs * tau), n=n)
 
     # Add Gaussian background noise
@@ -55,7 +55,7 @@ def make_source(loc, angle_deg, snr_db=20.0):
 # ============================================================
 def run_visual_diagnostic():
     print("🎨 Running Level 2 Visual Diagnostic for SRPLocalizer...")
-    loc = SRPLocalizer(sample_rate=16000, radius=0.04625, par_threshold=1.25)
+    loc = SRPLocalizer(par_threshold=1.25)
 
     # Define 3 test scenarios
     scenarios = [
@@ -126,7 +126,7 @@ def run_visual_diagnostic():
         ax_polar.fill(theta_rad, power, color="royalblue", alpha=0.15)
 
         # Mark physical 6-mic positions on the perimeter
-        for m_idx, m_deg in enumerate(loc.mic_angles_deg):
+        for m_idx, m_deg in enumerate(loc.geometry.mic_angles_deg):
             ax_polar.plot(np.deg2rad(m_deg), 1.05, "k^", markersize=6)
             if idx == 0:
                 ax_polar.text(np.deg2rad(m_deg), 1.2, f"M{m_idx+1}", ha="center", fontsize=7)

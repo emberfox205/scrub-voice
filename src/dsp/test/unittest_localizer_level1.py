@@ -15,8 +15,8 @@ from source.localizer import SRPLocalizer
 # ============================================================
 def make_source(loc, angle_deg, snr_db=20.0):
     """Generate fake 6-mic audio with a source at a known angle."""
-    n = int(0.5 * loc.sample_rate)
-    t = np.arange(n) / loc.sample_rate
+    n = int(0.5 * loc.framing.sample_rate)
+    t = np.arange(n) / loc.framing.sample_rate
     angle_rad = np.deg2rad(angle_deg)
     # Broadband speech-like signal
     source = sum(
@@ -26,10 +26,10 @@ def make_source(loc, angle_deg, snr_db=20.0):
     source /= np.max(np.abs(source))
     # Apply per-mic delays in frequency domain
     S = np.fft.rfft(source)
-    freqs = np.fft.rfftfreq(n, 1.0 / loc.sample_rate)
-    audio = np.zeros((loc.num_mics, n), dtype=np.float64)
-    for m in range(loc.num_mics):
-        tau = -(loc.radius / loc.speed_of_sound) * np.cos(angle_rad - loc.mic_angles_rad[m])
+    freqs = np.fft.rfftfreq(n, 1.0 / loc.framing.sample_rate)
+    audio = np.zeros((loc.geometry.num_mics, n), dtype=np.float64)
+    for m in range(loc.geometry.num_mics):
+        tau = -(loc.geometry.radius / loc.geometry.speed_of_sound) * np.cos(angle_rad - loc.geometry.mic_angles_rad[m])
         audio[m] = np.fft.irfft(S * np.exp(-1j * 2 * np.pi * freqs * tau), n=n)
     # Add noise at controlled SNR
     sig_power = np.mean(audio ** 2)

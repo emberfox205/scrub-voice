@@ -20,6 +20,7 @@ from source.localizer import SRPLocalizer
 from source.beamformer import DASBeamformer
 from source.speaker_verifier import SpeakerVerifier
 from source.enroll_doctor import DoctorEnroller
+from .circuit_framing_config import CircularMicrophoneArray, AudioFramingConfig
 
 # Hardware & Pipeline Constants
 DEVICE = "plughw:seeed8micvoicec,0"  # ReSpeaker 6-Mic array on Raspberry Pi
@@ -48,13 +49,16 @@ def initialize_system():
     _ = vad.is_speech_active(dummy_multi)
     print("   ✓ Silero VAD ready & warmed up.")
 
+    geometry = CircularMicrophoneArray()
+    framing = AudioFramingConfig(sample_rate=SAMPLE_RATE)
+
     print("[2/4] Initializing SRP Localizer (Gate 2)...")
-    localizer = SRPLocalizer(sample_rate=SAMPLE_RATE, radius=0.04625, par_threshold=1.15)
+    localizer = SRPLocalizer(geometry=geometry, framing=framing, par_threshold=1.15)
     _ = localizer.localize(dummy_multi)
     print("   ✓ SRP Localizer ready (360° steering phases precomputed).")
 
     print("[3/4] Initializing DAS Beamformer (Module 3)...")
-    beamformer = DASBeamformer(sample_rate=SAMPLE_RATE, radius=0.04625)
+    beamformer = DASBeamformer(geometry=geometry, framing=framing)
     _ = beamformer.beamform(dummy_multi, target_angles=0.0)
     print("   ✓ DAS Beamformer ready (center-padding COLA active).")
 
