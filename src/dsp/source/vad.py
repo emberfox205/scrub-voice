@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import os
 
 class SileroVAD:
     # Gate 1: Voice Activity Detection
@@ -9,14 +10,24 @@ class SileroVAD:
         self.threshold = threshold
         self.window_size_samples = 512
 
-        # Load lightweight Silero VAD pre-trained model
-        self.model, _ = torch.hub.load(
-            repo_or_dir='snakers4/silero-vad',
-            model='silero_vad',
-            force_reload=False,
-            onnx=False,
-            trust_repo=True,
-        )
+        # Load lightweight Silero VAD pre-trained model (offline-first from local cache)
+        cache_dir = os.path.expanduser('~/.cache/torch/hub/snakers4_silero-vad_master')
+        if os.path.exists(cache_dir):
+            self.model, _ = torch.hub.load(
+                repo_or_dir=cache_dir,
+                model='silero_vad',
+                source='local',
+                trust_repo=True,
+            )
+        else:
+            self.model, _ = torch.hub.load(
+                repo_or_dir='snakers4/silero-vad:master',
+                model='silero_vad',
+                force_reload=False,
+                onnx=False,
+                trust_repo=True,
+                skip_validation=True,
+            )
         self.model.eval()
 
     def is_speech_active(self, audio_chunk: np.ndarray) -> bool:
