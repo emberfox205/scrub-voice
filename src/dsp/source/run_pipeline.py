@@ -20,7 +20,7 @@ from source.localizer import SRPLocalizer
 from source.beamformer import DASBeamformer
 from source.speaker_verifier import SpeakerVerifier
 from source.enroll_doctor import DoctorEnroller
-from .circuit_framing_config import CircularMicrophoneArray, AudioFramingConfig
+from source.circuit_framing_config import CircularMicrophoneArray, AudioFramingConfig
 
 # Hardware & Pipeline Constants
 DEVICE = "plughw:seeed8micvoicec,0"  # ReSpeaker 6-Mic array on Raspberry Pi
