@@ -144,6 +144,9 @@ class SRPLocalizer:
             if any(min(abs(dom_angle - a), 360.0 - abs(dom_angle - a)) < self.tolerance_deg for a in detected_angles):
                 break
 
+            if pass1_power is not None and pass1_power[dom_idx] < 0.25:
+                break
+
             detected_angles.append(round(dom_angle, 1))
 
             # Spatial Nulling in STFT domain (Pure SRP-CLEAN)
