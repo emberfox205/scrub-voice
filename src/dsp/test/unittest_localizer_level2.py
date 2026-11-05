@@ -55,7 +55,7 @@ def make_source(loc, angle_deg, snr_db=20.0):
 # ============================================================
 def run_visual_diagnostic():
     print("🎨 Running Level 2 Visual Diagnostic for SRPLocalizer...")
-    loc = SRPLocalizer(par_threshold=1.25)
+    loc = SRPLocalizer(par_threshold=1.15)
 
     # Define 3 test scenarios
     scenarios = [
@@ -65,9 +65,13 @@ def run_visual_diagnostic():
             "audio": make_source(loc, 60.0, snr_db=25.0),
         },
         {
-            "title": "Scenario B: Multi-Speaker (Surgeon @ 60° + Nurse @ 180°)",
-            "ground_truth": [60.0, 180.0],
-            "audio": (make_source(loc, 60.0, snr_db=25.0) + make_source(loc, 180.0, snr_db=25.0)) / 2.0,
+            "title": "Scenario B: Multi-Speaker (Surgeon @ 60° + Nurse @ 180° + Anesthetist @ 300°)",
+            "ground_truth": [60.0, 180.0, 300.0],
+            "audio": (
+                make_source(loc, 60.0, snr_db=25.0)
+                + make_source(loc, 180.0, snr_db=25.0)
+                + make_source(loc, 300.0, snr_db=25.0)
+            ) / 3.0,
         },
         {
             "title": "Scenario C: Diffuse Room Noise (Gate 2 Rejection)",

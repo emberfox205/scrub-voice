@@ -121,6 +121,18 @@ def test_two_sources(loc):
     assert any(circ_dist(a, 60.0) <= 15.0 for a in angles), f"60° missing: {angles}"
     assert any(circ_dist(a, 180.0) <= 15.0 for a in angles), f"180° missing: {angles}"
 
+def test_three_sources(loc):
+    mixed = (
+        make_source(loc, 60.0, snr_db=25.0)
+        + make_source(loc, 180.0, snr_db=25.0)
+        + make_source(loc, 300.0, snr_db=25.0)
+    ) / 3.0
+    angles, _ = loc.localize(mixed)
+    assert len(angles) == 3, f"Expected exactly 3 sources, got {angles}"
+    assert any(circ_dist(a, 60.0) <= 15.0 for a in angles), f"60° missing: {angles}"
+    assert any(circ_dist(a, 180.0) <= 15.0 for a in angles), f"180° missing: {angles}"
+    assert any(circ_dist(a, 300.0) <= 15.0 for a in angles), f"300° missing: {angles}"
+
 def test_close_sources_merged(loc):
     """Sources < 15° apart should merge into 1 detection (distance=15 limit)."""
     mixed = (make_source(loc, 60.0) + make_source(loc, 70.0)) / 2
