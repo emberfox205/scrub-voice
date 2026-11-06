@@ -28,7 +28,7 @@ SAMPLE_RATE = 16000
 CHUNK_DURATION = 0.5                 # 500ms chunks (8000 samples)
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_DURATION)
 
-MAX_TTL_FRAMES = 5      # 5 frames * 0.5s = 2.5s tracking memory
+MAX_TTL_FRAMES = 4      # 5 frames * 0.5s = 2.5s tracking memory
 TOLERANCE_DEG = 15.0    # Tolerance for the difference between 2 distinguishable angles
 
 VERIFICATION_WINDOW_SEC = 1.5   # Desired evaluation window in seconds
