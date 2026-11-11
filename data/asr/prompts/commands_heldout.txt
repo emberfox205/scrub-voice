@@ -1,0 +1,62 @@
+## Held-out set: same intents, different wording and values. NEVER use these
+## recordings or their results for tuning (grammar, prompt sentence,
+## correction list, thresholds). Record with other speakers if possible and
+## run only for the final numbers.
+
+# pick_tool
+Pass me the scissors
+Hand me the snap
+Give me the tweezers
+Blade please
+Can I have the hemostat
+
+# park_arm
+Park the arm
+Robot standby
+
+# clear_emergency
+Back off now
+Clear the area
+
+# halt_emergency
+Stop the robot
+Halt
+Freeze, freeze
+
+# open_scan
+Show the CT
+Open X-ray
+Display the MRI scan
+
+# close_scan
+Close the MRI
+Close X-ray
+
+# zoom_display
+Zoom in four x
+Zoom out two x
+Magnify
+
+# navigate_slice
+Previous three slices
+Go to slice twelve
+Next two slices
+Back one slice
+
+# log_event
+Log event, hemostasis achieved
+Record milestone, port placement complete, note no bleeding
+Record event, specimen removed
+
+# move_camera
+Camera down three centimeters
+Move the camera backward
+Camera right twenty centimeters
+
+# tilt_camera
+Tilt the camera left ten degrees
+Tilt down
+
+# reset_camera
+Camera home please
+Reset the camera view

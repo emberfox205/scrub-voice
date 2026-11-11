@@ -42,3 +42,28 @@ Thumbs.db
 
 # Generated audio outputs
 data/dsp/output/
+results/
+*dsp_debug*/
+
+# ASR models, benchmark results and recordings
+src/asr/models/
+src/asr/results/
+data/asr/commands_dev/
+data/asr/commands_heldout/
+data/asr/non_command/
+data/asr/noise_only/
+
+# Heavy Binary
+*.safetensors
+artifacts/
+
+# Temporary archives, patches, and deployment bundles
+*.patch
+*.diff
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+
+.agents/

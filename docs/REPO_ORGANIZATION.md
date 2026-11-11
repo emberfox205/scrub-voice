@@ -7,7 +7,7 @@ This document defines the canonical folder hierarchy and placement rules for the
 ## 1. High-Level Repository Tree
 
 ```text
-ur_arm/
+scrub-voice/
 ├── .gitattributes
 ├── .gitignore
 ├── AGENTS.md
@@ -18,15 +18,27 @@ ur_arm/
 │   ├── asr/
 │   └── dsp/
 ├── docs/
+├── evaluations/
+│   ├── asr/
+│   ├── dsp/
+│   ├── full-pipe/
+│   ├── nlu/
+│   └── orchestrator/
 ├── schemas/
 ├── src/
 │   ├── actuators/
+│   │   ├── mujoco/
 │   │   └── sim_ws/
 │   ├── dsp/
+│   │   ├── denoise/
 │   │   ├── source/
 │   │   └── test/
-│   └── nlu/
-│       └── models/
+│   ├── monitor/
+│   │   ├── handlers/
+│   │   └── static/
+│   ├── nlu/
+│   │   └── models/
+│   └── orchestrator/
 └── test/
 ```
 
@@ -47,6 +59,16 @@ ur_arm/
 * **Purpose:** Technical guides, hardware deployment manuals, workflow policies, and project documentation.
 * **Rule:** All markdown documentation files (except the root `README.md`) must reside here and follow the uppercase naming convention (`LIKE_THIS.md`).
 
+### `evaluations/`
+
+* **Purpose:** Empirical edge performance benchmarks, latency profiling, metric definitions, and recommendations for subsystem improvements across all pipeline modules.
+* **Subdirectories:**
+  * `dsp/`: Multi-channel beamforming, DeepFilterNet suppression, and Silero VAD gating.
+  * `asr/`: Vosk grammar FST decoding, token posterior confidence, and vocabulary expansion.
+  * `nlu/`: SetFit transformer latency, ARM thread scaling, and Draft 2020-12 schema validation.
+  * `orchestrator/`: ZeroMQ IPC dual-channel priority transit, LVC state caching, and watchdog failover.
+  * `full-pipe/`: End-to-end voice-to-display latency budgets, RAM footprint, and clinical ergonomics.
+
 ### `proposal/`
 
 * **Purpose:** Formal academic project proposal files, including LaTeX sources (`.tex`), graphics, and compiled presentation PDFs.
@@ -60,16 +82,24 @@ ur_arm/
 
 * **Purpose:** Core Python source code for the edge voice-to-intent pipeline.
 * **Subdirectories:**
-  * `actuators/`: Hardware actuation interfaces (Universal Robots `ur_rtde` controller bindings, gripper controls, and Cartesian trajectory routines).
+  * `actuators/`: Hardware actuation interfaces, gripper controls, waypoints, and simulation environments.
+    * `mujoco/`: Google DeepMind MuJoCo physics models, CAD meshes, and kinematic XML definitions for UR-10e and OnRobot RG-2.
+    * `sim_ws/`: Simulation runner, interactive 3D console, camera-to-gripper extrinsic calibration (`calibrate_offset.py`), and waypoint execution (`move_to_waypoint.py`).
   * `dsp/`: Digital Signal Processing algorithms (delay-and-sum beamforming, super-directivity, PHAT whitening, and VAD gating).
-    * `source/`: Low-level hardware audio streaming interfaces (`arecord`) and voice activity detector wrappers.
-    * `test/`: Subsystem unit tests for streaming buffers and DSP modules.
+    * `denoise/`: DeepFilterNet deep noise suppression models, ONNX runtime exports, and edge inference scripts.
+    * `source/`: Low-level hardware audio streaming interfaces (`arecord`), beamforming, and voice activity detector wrappers.
+    * `test/`: Subsystem unit and integration tests for streaming buffers and DSP modules.
+  * `monitor/`: Offline intraoperative clinical dashboard, WebSocket streaming gateway, and DICOM viewport (IBM Carbon g100 dark theme).
+    * `handlers/`: Modular intent handlers for scan viewer navigation, surgical event logging, robotic tool handling, and emergency states.
+    * `static/`: Standalone offline web assets, styling, and sample clinical DICOM/image scans (CT, MRI, X-ray).
   * `nlu/`: Natural Language Understanding logic (intent prediction, slot extraction, confidence scoring).
     * `models/`: Local edge model directories containing fine-tuned checkpoints and tokenizer configurations (e.g., `setfit_bge-micro-v2_8k/`).
+  * `orchestrator/`: Central event-driven orchestrator managing ZeroMQ command dispatching (`ipc:///tmp/scrub_bus.ipc`), state snapshot caching, and telemetry.
 
 ### `test/`
 
-* **Purpose:** Top-level end-to-end testing, hardware benchmark runners, and edge performance profiling scripts (e.g., `test_rpi_intent.py` for Raspberry Pi 4).
+* **Purpose:** Top-level end-to-end testing, modular benchmark runners, interactive audio listening, and edge performance profiling scripts (e.g., `test_edge.py`, `test_dsp_listen.py`, `test_asr_audio.py`, `test_monitor_prompt.py`, `benchmark_suite.py`).
+  * `benchmarks/`: Modular benchmark runner suite (`bench_smoke.py`, `bench_ipc.py`, `bench_dsp.py`, `bench_nlu.py`, `bench_asr.py`, `bench_e2e.py`, `bench_live.py`, `bench_soak.py`) and statistical/telemetry modules in `common/`.
 
 ---
 

@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict
 
 from src.monitor.handlers.registry import register_intent
-from src.monitor.state import MonitorState
+from src.monitor.state import DEFAULT_SCAN_METADATA, MonitorState
 
 logger = logging.getLogger("monitor.handlers.scan")
 
@@ -34,7 +34,9 @@ def handle_open_scan(state: MonitorState, command: Dict[str, Any]) -> MonitorSta
             state.active_scan = scan_type
             state.current_slice = 1
             state.zoom_factor = 1.0
-            logger.info("Opened scan modality: %s", scan_type)
+            meta = DEFAULT_SCAN_METADATA.get(scan_type, {})
+            state.total_slices = meta.get("total_slices", 16)
+            logger.info("Opened scan modality: %s (total_slices=%d)", scan_type, state.total_slices)
         else:
             logger.warning("Rejected invalid scan_type: %r (valid: %s)", raw_scan_type, VALID_SCAN_TYPES)
     else:
@@ -98,14 +100,30 @@ def handle_navigate_slice(state: MonitorState, command: Dict[str, Any]) -> Monit
     """
     Navigates through the cross-sectional slice stack.
     Supports either direct slice_index or relative direction (NEXT/PREVIOUS) with step_count.
-    Slice numbers are clamped to minimum 1.
+    Slice numbers are clamped between 1 and state.total_slices.
+    Single-frame planar projections (e.g. X-ray) are guarded to remain at slice 1.
     """
     slots = command.get("slots", {})
+    max_slices = max(1, getattr(state, "total_slices", 16))
+
+    # Guard for single-frame planar modalities (e.g. X-ray)
+    if state.active_scan == "xray" or max_slices <= 1:
+        state.current_slice = 1
+        logger.info("Modality '%s' is a single-frame planar projection; slice kept at 1.", state.active_scan)
+        return state
 
     if slots.get("slice_index") is not None:
         try:
             target_slice = int(slots["slice_index"])
-            state.current_slice = max(1, target_slice)
+            clamped = max(1, min(max_slices, target_slice))
+            if target_slice != clamped:
+                logger.warning(
+                    "Direct slice_index %d out of bounds (1..%d); clamped to %d",
+                    target_slice,
+                    max_slices,
+                    clamped,
+                )
+            state.current_slice = clamped
             logger.info("Direct slice navigation to index: %d", state.current_slice)
         except (ValueError, TypeError):
             logger.warning("Invalid slice_index in slots: %r", slots["slice_index"])
@@ -119,9 +137,15 @@ def handle_navigate_slice(state: MonitorState, command: Dict[str, Any]) -> Monit
         if direction == "PREVIOUS":
             state.current_slice = max(1, state.current_slice - step)
         else:  # NEXT or default
-            state.current_slice += step
+            state.current_slice = min(max_slices, state.current_slice + step)
 
-        logger.info("Relative slice navigation: direction=%s, step=%d -> new_slice=%d", direction, step, state.current_slice)
+        logger.info(
+            "Relative slice navigation: direction=%s, step=%d -> new_slice=%d (max=%d)",
+            direction,
+            step,
+            state.current_slice,
+            max_slices,
+        )
     else:
         logger.warning("navigate_slice missing both slice_index and direction in slots: %s", slots)
 

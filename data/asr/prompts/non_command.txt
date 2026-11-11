@@ -1,0 +1,28 @@
+## Speech that is NOT a command, for the false-command check.
+
+# out_of_domain
+## No command words at all. Any command term in the output is a false command.
+It is raining outside
+Hello
+How was your weekend
+The patient is stable
+Let's take a short break
+Is the anesthesia team ready
+Who is closing today
+That looks good, keep going
+Check the blood pressure
+We are running a bit late
+Suction, please
+The family is waiting outside
+
+# near_miss
+## Command words used in ordinary talk. The ASR should transcribe them
+## faithfully; whether they become a command is the language understanding
+## stage's decision. Report separately - not counted as ASR false commands.
+Pass that thing
+I'll back off on the fluids
+Don't stop now, we are almost done
+My hands are freezing
+The scan from yesterday looked fine
+Where did I park my car
+Can you clear the table after the case

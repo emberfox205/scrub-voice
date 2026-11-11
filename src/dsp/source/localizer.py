@@ -22,7 +22,7 @@ class SRPLocalizer:
         self.freq_range = freq_range
         self.par_threshold = par_threshold
 
-        # Default: 6 microphones in circle [0°, 60°, 120°, 180°, 240°, 300°]
+        # Default: 6 microphones in circle [300°, 240°, 180°, 120°, 60°, 0°]
         if mic_angles_deg is None:
             self.mic_angles_deg = np.array([300.0, 240.0, 180.0, 120.0, 60.0, 0.0])
 

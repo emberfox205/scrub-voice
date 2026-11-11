@@ -1,7 +1,14 @@
-from typing import Optional, List, Tuple
+from typing import Optional, List, Union
 import numpy as np
 
 class DASBeamformer:
+    """
+    Delay-and-Sum (DAS) Beamformer with Competitive Spatial Masking.
+    Module 3 in the DSP pipeline:
+    - Single speaker: Steers constructive interference toward target angle.
+    - Multiple speakers: Applies Soft Wiener Masking in the STFT domain
+      to eliminate acoustic cross-talk between overlapping talkers.
+    """
     def __init__(
         self,
         sample_rate: int = 16000,
@@ -60,77 +67,139 @@ class DASBeamformer:
         # -----------------------------------------------------------------
         self.window = np.hanning(self.frame_size).astype(np.float32)
 
-    def beamform(self, audio_chunk: np.ndarray, target_angle_deg: float) -> np.ndarray:
+    def wiener_mask(
+            self,
+            Y_stft: np.ndarray,
+            alpha: float = 1.3,
+            floor: float = 0.10,
+            eps: float = 1e-10,
+    ) -> np.ndarray :
         """
-        Steers a single beam towards target_angle_deg and synthesizes back to time domain.
+        Applies Multi-Beam Soft Wiener Masking to eliminate cross-talk between multiple speakers.
         Args:
-            audio_chunk: Multi-channel audio array of shape (num_mics, num_samples)
-            target_angle_deg: Steered azimuth angle in degrees [0, 360)
+            Y_stft: Complex STFT tensor of shape (num_targets, num_freqs, num_frames)
+            alpha: Over-subtraction aggressiveness (1.0 to 1.5)
+            floor: Safety attenuation floor (0.10 = max -20 dB suppression)
+            eps: Epsilon to prevent division by zero
         Returns:
-            enhanced_audio: 1D mono float32 array of shape (num_samples,)
+            Masked complex STFT tensor of shape (num_targets, num_freqs, num_frames)
         """
-        # 1. Input Validation
+        num_targets = Y_stft.shape[0]
+
+        # Shape: (num_targets, num_freqs, num_frames)
+        beam_power = np.abs(Y_stft) ** 2
+
+        # Shape: (1, freqs, frames)
+        total_power = np.sum(beam_power, axis=0, keepdims=True)
+
+        # Broadcasted subtraction:
+        p_interf = total_power - beam_power
+
+        # ADAPTIVE ALPHA
+        alpha_eff = alpha / max(1, num_targets - 1)
+
+        # Soft Wiener Gain for all targets simultaneously
+        wiener_gain = beam_power / (beam_power + alpha_eff * p_interf + eps)
+        wiener_gain = np.clip(wiener_gain, floor, 1.0).astype(np.float32)
+
+        Y_stft *= wiener_gain
+
+        return Y_stft
+
+    def beamform(
+        self, 
+        audio_chunk: np.ndarray, 
+        target_angles: Union[float, List[float]],
+        apply_wiener_mask: bool = True,
+        ) -> Union[np.ndarray, List[np.ndarray]]:
+        """
+        Steers beam(s) towards one or more target angles.
+        - If target_angles is a float (e.g. 180.0): returns 1D array of shape (num_samples,).
+        - If target_angles is a list (e.g. [60.0, 180.0]): returns List[1D array] with
+          Soft Wiener cross-talk suppression applied between competing talkers
+        """
+        # 1. Normalize input to list and remember if input was single float
+        is_single = isinstance(target_angles, (int, float))
+        if is_single:
+            angles_list = [float(target_angles)]
+        else:
+            angles_list = [float(a) for a in target_angles]
+        if not angles_list:
+            return []
+        
+        # 2. Input Validation
         if audio_chunk.ndim != 2 or audio_chunk.shape[0] != self.num_mics:
             raise ValueError(
                 f"Expected audio_chunk of shape ({self.num_mics}, num_samples), "
                 f"got {audio_chunk.shape}"                
             )       
 
+        num_targets = len(angles_list)
         num_samples = audio_chunk.shape[1]
-        num_frames = max(0, 1 + (num_samples - self.frame_size) // self.hop_size)
 
-        if num_frames == 0:
-            return np.zeros(num_samples, dtype=np.float32)
+        if num_samples < self.frame_size:
+            zeros = np.zeros(num_samples, dtype=np.float32)
+            return zeros if is_single else [zeros for _ in range(num_targets)]
 
-        # 2. Steering weights Retrieval for target angle
-        angle_idx = int(round(target_angle_deg)) % 360
-        weights = self.steering_weights_360[angle_idx]      # Shape: (6, 257)
+                # -------------------------------------------------------------
+        # Center-Padding: Symmetrically pad boundaries (similar to PyTorch center=True)
+        # Guarantees all original samples fall inside the flat COLA reconstruction zone,
+        # eliminating the 64-sample silence gap and boundary fading.
+        # -------------------------------------------------------------
+        pad_left = self.frame_size // 2  # 256 samples
+        rem = (pad_left + num_samples - self.frame_size) % self.hop_size
+        pad_right = (self.hop_size - rem) % self.hop_size + (self.frame_size // 2)
+        padded_chunk = np.pad(audio_chunk, ((0, 0), (pad_left, pad_right)), mode="reflect")
+        num_frames = 1 + (padded_chunk.shape[1] - self.frame_size) // self.hop_size
 
-        # Buffers for Overlap-Add (OLA) Synthesis
+        # 3. Steering weights Retrieval for target angle (num_targets, num_mics, num_freqs)
+        target_indices = [int(round(ang)) % 360 for ang in angles_list]
+        weights = self.steering_weights_360[target_indices]      # Shape: (num_targets, 6, 257)
+
+        # 4. Multi-Beam STFT Tensor: Shape (num_targets, num_freqs, num_frames)
+        Y_stft = np.zeros((num_targets, self.num_freqs, num_frames), dtype=np.complex64)   
+
+        for frame_idx in range(num_frames):
+            start = frame_idx * self.hop_size
+            frame = padded_chunk[:, start : start + self.frame_size] * self.window
+
+            # Multi-channel FFT: Shape (num_mics, num_freqs)
+            X = np.fft.rfft(frame, axis = 1)
+
+            # Delay-and-Sum across microphones for all targets simultaneously
+            # weights: (K, 6, 257), X: (1, 6, 257) -> sum over mic axis (axis=1) -> (K, 257)
+            Y_stft[:, :, frame_idx] = np.sum(weights * X[None, :, :], axis=1)
+
+        # -------------------------------------------------------------
+        # 5. Multi-Beam Soft Wiener Masking (Cross-Talk Suppression)
+        # Automatically activates only when 2 or more targets exist
+        # -------------------------------------------------------------
+        if num_targets > 1 and apply_wiener_mask:
+            Y_stft = self.wiener_mask(Y_stft)
+
+        # -------------------------------------------------------------
+        # 6. Overlap-Add (OLA) Synthesis via iSTFT
+        # -------------------------------------------------------------
         output_len = (num_frames - 1) * self.hop_size + self.frame_size
-        enhanced = np.zeros(output_len, dtype=np.float32)
+        separated_audio = np.zeros((num_targets, output_len), dtype=np.float32)
         window_sum = np.zeros(output_len, dtype=np.float32)
 
         for frame_idx in range(num_frames):
             start = frame_idx * self.hop_size
-            frame = audio_chunk[:, start : start + self.frame_size] * self.window
 
-            # Multi-channel STFT: shape (num_mics, num_freqs)
-            X = np.fft.rfft(frame, axis=1)
-
-            # Delay-and-Sum across microphones (axis 0)
-            Y = np.sum(weights * X, axis=0)     # Shape: (num_freqs,)
-
-            # Inverse Real FFT back to time domain
-            time_frame = np.fft.irfft(Y, n=self.frame_size)
-
-            # Overlap-add synthesis
-            enhanced[start : start + self.frame_size] += time_frame * self.window
+            # iSTFT across all targets: Shape (num_targets, frame_size)
+            time_frames = np.fft.irfft(Y_stft[:, :, frame_idx], n=self.frame_size, axis=1)
+            separated_audio[:, start : start + self.frame_size] += time_frames * self.window[None, :]
             window_sum[start : start + self.frame_size] += self.window ** 2
 
-        # Overlap-add window normalization
-        #safe_window_sum = np.maximum(window_sum, 1e-4)
+        # Safe window normalization
         safe_window_sum = np.maximum(window_sum, 0.1 * np.max(window_sum))
-        enhanced /= safe_window_sum
+        separated_audio /= safe_window_sum[None, :]
 
-        # Pad / trim output to match exact input chunk length
-        result = np.zeros(num_samples, dtype=np.float32)
-        copy_len = min(num_samples, output_len)
-        result[:copy_len] = enhanced[:copy_len]
-
-        return result
-
-    def beamform_multi(self, audio_chunk: np.ndarray, target_angles_deg: List[float]) -> List[np.ndarray]:
-        """
-        Steers multiple simultaneous beams toward all angles detected by Gate 2.
-        Args:
-            audio_chunk: Multi-channel audio array of shape (num_mics, num_samples)
-            target_angles_deg: List of detected azimuth angles in degrees [0, 360)
-        Returns:
-            List of 1D mono float32 arrays, one per target angle.
-        """
-        if not target_angles_deg:
-            return []
-
-        return [self.beamform(audio_chunk, angle) for angle in target_angles_deg]
+        # 7. Extract exact original chunk (guaranteed 100% non-zero, COLA preserved)
+        out = separated_audio[:, pad_left : pad_left + num_samples]
+    
+        # If user passed a single float, return a single array; else return the list
+        return out[0] if is_single else list(out)
+ 
 

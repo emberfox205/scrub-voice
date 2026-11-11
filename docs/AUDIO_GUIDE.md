@@ -4,7 +4,35 @@ Quick reference for hardware audio recording, mixer calibration, and playback te
 
 ---
 
-## 1. Multi-Mic Recording Script (`~/Music/record_6mics.py`)
+## 1. Quick In-Repo Recording Tool (`test/record_audio.py`)
+
+A safe, DMA-aligned hardware recording utility conforming strictly to `AGENTS.md` rules:
+- **RAM-first staging:** Captures into `/dev/shm` in RAM first before writing to disk, protecting the Raspberry Pi microSD card from controller freezes.
+- **DMA Ring Buffer:** Configures `--buffer-size=65536 --period-size=8192` to eliminate ALSA XRUNs.
+- **ALSA Driver Cleanup:** Intercepts `Ctrl+C` (SIGINT) to cleanly call `snd_pcm_close()`.
+- **Live VU Meter & Tap Test:** Renders live dB meter and prints per-mic channel energy upon completion.
+
+### Usage
+```bash
+# 1. Quick 5-second recording (saves to data/wav_files/test_recording_<timestamp>.wav):
+python test/record_audio.py
+
+# 2. Custom duration (e.g. 10s) and custom destination:
+python test/record_audio.py -d 10 -o data/wav_files/surgical_command_01.wav
+
+# 3. Manual interactive mode (press Enter to stop):
+python test/record_audio.py --manual
+
+# 4. Save single-channel mono (Mic 1) instead of 6-mic array:
+python test/record_audio.py -d 5 --mono
+
+# 5. Record and immediately transcribe/evaluate with ASR + NLU:
+python test/record_audio.py -d 5 --eval
+```
+
+---
+
+## 2. Legacy Standalone Script (`~/Music/record_6mics.py`)
 
 A synchronized recording script is located in `~/Music/record_6mics.py` on the Pi. It captures the raw 8-channel hardware stream, drops dummy channels (6 & 7), and splits the active microphones into 6 individual WAV files (`mic_01.wav` – `mic_06.wav`).
 
@@ -29,7 +57,7 @@ The script outputs:
 
 ---
 
-## 2. Earphone Playback on the Pi
+## 3. Earphone Playback on the Pi
 
 To listen to recordings directly from the Pi with earphones:
 

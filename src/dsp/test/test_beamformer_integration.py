@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   python src/dsp/test/test_beamformer_integration.py
+# ==============================================================================
 import sys
 import time
 from pathlib import Path
@@ -35,7 +40,7 @@ def initialize_system():
 
     # 1. Gate 1: Silero VAD
     print("⏳ [1/3] Initializing Silero VAD (Gate 1)...")
-    vad = SileroVAD(sample_rate=SAMPLE_RATE, threshold=0.35)
+    vad = SileroVAD(sample_rate=SAMPLE_RATE, threshold=0.50)
 
     # PyTorch cold-start warmup
     dummy_chunk = np.zeros((6, 8000), dtype=np.float32)
@@ -51,7 +56,7 @@ def initialize_system():
     # 3. Module DAS Beamformer
     print("⏳ [3/3] Initializing DAS Beamformer (Module 3)...")
     beamformer = DASBeamformer(sample_rate=SAMPLE_RATE, radius=0.04625)
-    _ = beamformer.beamform(dummy_chunk, target_angle_deg=0.0)
+    _ = beamformer.beamform(dummy_chunk, target_angles=0.0)
     print("   ✓ DAS Beamformer ready (360° weights precomputed).")
 
     print("=" * 70)
@@ -79,7 +84,10 @@ def run_live_pipeline():
     raw_recording = []
 
     # Fully dynamic dictionary: handles Stream 0, 1, 2, ... automatically
-    beam_recordings = defaultdict(list)
+    speaker_tracks = {}  # {track_angle: [chunks]}
+
+    active_speakers = {}      # {track_angle: remaining_ttl_frames}
+    MAX_TTL_FRAMES = 6
 
     try:
         # 2. Open live ALSA audio capture stream
@@ -124,8 +132,33 @@ def run_live_pipeline():
                 detected_angles, _ = localizer.localize(chunk)
                 loc_ms = (time.perf_counter() - t_loc) * 1000
 
-                # DIFFUSE ECHO EXIT: Reverberation / Flat energy -> Discard
-                if not detected_angles:
+                # 1. Update Angle Tracker with newly detected speakers
+                for ang in detected_angles:
+                    matched = False
+                    for tracked_ang in list(active_speakers.keys()):
+                        diff = abs(ang - tracked_ang)
+                        circ_diff = min(diff, 360.0 - diff)
+                        if circ_diff <= 15.0:  # ±15° tolerance (same person moving slightly)
+                            active_speakers[tracked_ang] = MAX_TTL_FRAMES  # Refresh timer
+                            matched = True
+                            break
+
+                    if not matched:
+                        active_speakers[ang] = MAX_TTL_FRAMES
+
+                # 2. Decrement timer for speakers that paused in this 0.5s frame
+                for tracked_ang in list(active_speakers.keys()):
+                    was_heard = any(min(abs(a - tracked_ang), 360.0 - abs(a - tracked_ang)) <= 25.0 
+                                    for a in detected_angles)
+
+                    if not was_heard:
+                        active_speakers[tracked_ang] -= 1
+                        if active_speakers[tracked_ang] <= 0:
+                            del active_speakers[tracked_ang]    # Silent for > 3s -> remove
+
+                # 3. If nobody is active or in memory, abort Gate 2
+                target_angles_to_steer = list(active_speakers.keys())
+                if not target_angles_to_steer:
                     print(
                         f"[{timestamp}] #{frame_count:04d} | "
                         f"Peak: {peak_amp:5d} [{meter}] | "
@@ -134,15 +167,15 @@ def run_live_pipeline():
                     continue
 
                 # -------------------------------------------------------------
-                # Module 3: Dynamic Multi-Target Beamforming (DAS)
-                # Steers simultaneous beams for ALL detected angles
+                # Module 3: Dynamic Multi-Target Beamforming (DAS + Wiener)
+                # Steers simultaneous beams for ALL tracked positions in memory
                 # -------------------------------------------------------------
                 t_beam = time.perf_counter()
-                enhanced_streams = beamformer.beamform_multi(chunk, target_angles_deg=detected_angles)
+                enhanced_streams = beamformer.beamform(chunk, target_angles=target_angles_to_steer)
                 beam_ms = (time.perf_counter() - t_beam) * 1000
 
                 total_latency_ms = vad_ms + loc_ms + beam_ms
-                angles_str = ", ".join(f"{a:.0f}°" for a in detected_angles)
+                angles_str = ", ".join(f"{a:.0f}°" for a in target_angles_to_steer)
 
                 # Live Multi-Beam Telemetry
                 print(
@@ -156,9 +189,22 @@ def run_live_pipeline():
                 # Accumulate raw reference (Mic 0)
                 raw_recording.append(chunk[0].copy())
 
-                # Dynamically buffer each isolated beam stream
-                for idx, stream in enumerate(enhanced_streams):
-                    beam_recordings[idx].append(stream.copy())
+                # Route audio to speaker tracks based on their PHYSICAL ANGLE
+                for angle, stream in zip(target_angles_to_steer, enhanced_streams):
+                    matched_track = None
+                    for track_angle in speaker_tracks.keys():
+                        diff = abs(angle - track_angle)
+                        circ_diff = min(diff, 360.0 - diff)
+                        if circ_diff <= 15.0: 
+                            matched_track = track_angle
+                            break
+
+                    if matched_track is None:
+                        matched_track = angle
+                        speaker_tracks[matched_track] = []
+
+                    speaker_tracks[matched_track].append(stream.copy())
+
 
     except KeyboardInterrupt:
         print("\n🛑 Stopping live pipeline (Ctrl+C caught)...")
@@ -178,13 +224,14 @@ def run_live_pipeline():
             print(f"💾 Captured {duration_sec:.1f}s of active speech audio:")
             print(f"   👉 Raw Reference:     {raw_path}")
 
-            # Dynamically export every active beamformed stream
-            for stream_idx, chunks in beam_recordings.items():
+            # Save a dedicated file for each physical speaker position in the room
+            for track_angle, chunks in speaker_tracks.items():
                 if chunks:
                     beam_full = np.concatenate(chunks)
-                    beam_path = OUTPUT_DIR / f"live_beam_stream{stream_idx}.wav"
+                    track_dur = len(beam_full) / SAMPLE_RATE
+                    beam_path = OUTPUT_DIR / f"live_beam_stream_{track_angle}deg.wav"
                     wavfile.write(str(beam_path), SAMPLE_RATE, (beam_full * 32767).astype(np.int16))
-                    print(f"   👉 Beamformed Stream #{stream_idx}:       {beam_path}")
+                    print(f"   👉 Speaker at {int(track_angle):3d}° ({track_dur:4.1f}s): {beam_path}")
             print("=" * 70)
         else:
             print("\nℹ️ No active speech was detected during this run.")

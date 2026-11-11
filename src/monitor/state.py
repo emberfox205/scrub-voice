@@ -6,6 +6,8 @@ and robot telemetry placeholders.
 
 from __future__ import annotations
 
+import copy
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
@@ -29,11 +31,19 @@ class RobotTelemetry:
         return asdict(self)
 
 
+DEFAULT_SCAN_METADATA: Dict[str, Dict[str, Any]] = {
+    "ct": {"total_slices": 16, "name": "Computed Tomography (Axial Brain)", "planar": False},
+    "mri": {"total_slices": 16, "name": "Magnetic Resonance Imaging (Brain T1 Axial)", "planar": False},
+    "xray": {"total_slices": 1, "name": "Planar Radiograph (Chest PA)", "planar": True},
+}
+
+
 @dataclass
 class MonitorState:
     """Canonical intraoperative state cache for the monitor UI."""
     active_scan: Optional[str] = None  # "ct", "mri", "xray" or None
     current_slice: int = 1
+    total_slices: int = 16
     zoom_factor: float = 1.0  # Clamped between 1.0 and 10.0
     held_tool: Optional[str] = None  # "scalpel", "forceps", "scissors", "hemostat" or None
     recent_milestones: List[Dict[str, Any]] = field(default_factory=list)
@@ -41,21 +51,30 @@ class MonitorState:
     last_command: Optional[Dict[str, Any]] = None
     last_updated: float = field(default_factory=time.time)
     telemetry: RobotTelemetry = field(default_factory=RobotTelemetry)
+    # Thread-safe reentrant lock to protect concurrent reads/writes across ZMQ and ASGI threads
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
+
+    @property
+    def lock(self) -> threading.RLock:
+        """Exposes reentrant lock for thread-safe external compound transactions."""
+        return self._lock
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serializes state to a plain dictionary for JSON transmission."""
-        zoom = 1.0 if self.zoom_factor is None else float(self.zoom_factor)
-        return {
-            "active_scan": self.active_scan,
-            "current_slice": self.current_slice,
-            "zoom_factor": round(zoom, 2),
-            "held_tool": self.held_tool,
-            "recent_milestones": list(self.recent_milestones) if self.recent_milestones else [],
-            "emergency_active": bool(self.emergency_active),
-            "last_command": self.last_command,
-            "last_updated": float(self.last_updated) if self.last_updated is not None else time.time(),
-            "telemetry": self.telemetry.to_dict() if self.telemetry else RobotTelemetry().to_dict(),
-        }
+        """Serializes state to a plain dictionary for JSON transmission in a thread-safe manner."""
+        with self._lock:
+            zoom = 1.0 if self.zoom_factor is None else float(self.zoom_factor)
+            return {
+                "active_scan": self.active_scan,
+                "current_slice": self.current_slice,
+                "total_slices": self.total_slices,
+                "zoom_factor": round(zoom, 2),
+                "held_tool": self.held_tool,
+                "recent_milestones": list(self.recent_milestones) if self.recent_milestones else [],
+                "emergency_active": bool(self.emergency_active),
+                "last_command": copy.deepcopy(self.last_command) if self.last_command else None,
+                "last_updated": float(self.last_updated) if self.last_updated is not None else time.time(),
+                "telemetry": self.telemetry.to_dict() if self.telemetry else RobotTelemetry().to_dict(),
+            }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> MonitorState:
@@ -102,6 +121,7 @@ class MonitorState:
         return cls(
             active_scan=data.get("active_scan"),
             current_slice=_safe_int(data.get("current_slice"), 1),
+            total_slices=_safe_int(data.get("total_slices"), 16),
             zoom_factor=_safe_float(data.get("zoom_factor"), 1.0),
             held_tool=data.get("held_tool"),
             recent_milestones=milestones,
@@ -112,7 +132,9 @@ class MonitorState:
         )
 
     def reset_scan(self) -> None:
-        """Resets viewport back to empty default state."""
-        self.active_scan = None
-        self.current_slice = 1
-        self.zoom_factor = 1.0
+        """Resets viewport back to empty default state in a thread-safe manner."""
+        with self._lock:
+            self.active_scan = None
+            self.current_slice = 1
+            self.total_slices = 16
+            self.zoom_factor = 1.0

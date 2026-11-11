@@ -1,0 +1,90 @@
+## Development set: the commands from schemas/command_schema_guide.md plus
+## variations. Used for tuning (grammar, prompt sentence, correction list).
+## Numbers are written as words so the speaker says exactly the reference.
+## "# intent" lines are section headers -> manifest notes column.
+
+# pick_tool
+Hand scalpel
+Pass the iris scissors
+Give me the clamp
+Hand me the forceps
+Pass the hemostat
+Give me a ten blade
+Knife please
+Hand me the metzenbaum
+Pass the pickups
+
+# park_arm
+Park arm
+Standby robot
+Retract arm
+
+# clear_emergency
+Emergency clear
+Clear area
+Back off
+
+# halt_emergency
+Emergency stop
+Halt robot
+Freeze
+
+# open_scan
+Open CT scan
+Show MRI
+Display X-ray
+Open the MRI scan
+
+# close_scan
+Close scan
+Dismiss MRI
+Close viewer
+Close the CT scan
+
+# zoom_display
+Zoom
+Zoom in two x
+Zoom out
+Magnify three x
+Zoom out one point five x
+
+# navigate_slice
+Next slice
+Previous slice
+Back five slices
+Go to slice forty five
+Next three slices
+Go to slice one hundred twenty
+
+# log_event
+Log event, first incision
+Record milestone, trocar insertion complete
+Log event, hepatic artery clamped
+Record event, biopsy taken
+Log event, first incision, note patient vitals stable
+Record event, tumor resection complete, comment clean margins
+
+# move_camera
+Camera left five centimeters
+Move up
+Camera forward
+Camera backward ten centimeters
+Move the camera right two centimeters
+
+# tilt_camera
+Tilt down fifteen degrees
+Tilt right
+Tilt up
+Tilt left thirty degrees
+
+# reset_camera
+Reset camera
+Center view
+Camera home
+
+# messy
+Um, hand me the scalpel please
+Uh, zoom in a bit
+Could you tilt the camera up a little
+Okay, next slice please
+Emergency stop, emergency stop

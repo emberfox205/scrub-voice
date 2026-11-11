@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run full monitor IPC & WebSocket pipeline integration tests:
+#   python -m unittest test/test_monitor_pipeline.py
+#
+#   # 2. Verbose test output:
+#   python -m unittest -v test/test_monitor_pipeline.py
+# ==============================================================================
 """
 End-to-end integration tests for Scrub-Voice Orchestrator to Monitor pipeline.
 Verifies:
@@ -29,7 +37,10 @@ from fastapi.testclient import TestClient
 from src.orchestrator.dispatcher import CommandDispatcher
 from src.monitor.bridge import MonitorBridge
 from src.monitor.server import create_app
-from src.nlu.mock_publisher import MockCommandPublisher, PRESETS
+try:
+    from test.mock_publisher import MockCommandPublisher, PRESETS
+except ImportError:
+    from mock_publisher import MockCommandPublisher, PRESETS
 
 TEST_NLU_ADDR = "ipc:///tmp/test_pipe_nlu.ipc"
 TEST_NLU_PRIORITY_ADDR = "ipc:///tmp/test_pipe_nlu_priority.ipc"

@@ -43,7 +43,9 @@
   const canvas = document.getElementById('dicomCanvas');
   const ctx = canvas.getContext('2d');
   const hudScanType = document.getElementById('hudScanType');
+  const hudSliceRow = document.getElementById('hudSliceRow');
   const statSlice = document.getElementById('statSlice');
+  const statTotalSlices = document.getElementById('statTotalSlices');
   const statZoom = document.getElementById('statZoom');
 
   // DOM Elements - Audit Log
@@ -303,11 +305,22 @@
 
     const activeScan = monitorState.active_scan;
     const slice = monitorState.current_slice || 1;
+    const totalSlices = monitorState.total_slices || (activeScan === 'xray' ? 1 : 16);
     const zoom = monitorState.zoom_factor || 1.0;
 
-    // Update HUD text displays
+    // Update HUD text displays adhering to Carbon g100 style
     if (hudScanType) hudScanType.textContent = activeScan ? activeScan.toUpperCase() : 'STANDBY';
-    if (statSlice) statSlice.textContent = `${slice}`;
+    if (hudSliceRow) {
+      if (!activeScan) {
+        hudSliceRow.innerHTML = 'SLICE: <span id="statSlice">--</span> / <span id="statTotalSlices">--</span>';
+      } else if (activeScan === 'xray' || totalSlices <= 1) {
+        hudSliceRow.innerHTML = 'MODALITY: <span id="statSlice">PLANAR</span> (1 / 1)';
+      } else {
+        hudSliceRow.innerHTML = `SLICE: <span id="statSlice">${slice}</span> / <span id="statTotalSlices">${totalSlices}</span>`;
+      }
+    } else if (statSlice) {
+      statSlice.textContent = `${slice}`;
+    }
     if (statZoom) statZoom.textContent = `${zoom.toFixed(2)}x`;
 
     if (!activeScan) {
@@ -321,8 +334,8 @@
     ctx.scale(zoom, zoom);
     ctx.translate(-w / 2, -h / 2);
 
-    if (activeScan && scanImages[activeScan]) {
-      renderScanImage(w, h, activeScan);
+    if (activeScan) {
+      renderScanImage(w, h, activeScan, slice);
     }
 
     ctx.restore();
@@ -331,33 +344,59 @@
     drawHUDOverlays(w, h, activeScan, slice);
   }
 
-  // Preloaded Open Source Clinical Scans (100% Offline Static Assets)
-  const scanImages = {
-    ct: new Image(),
-    mri: new Image(),
-    xray: new Image()
+  // Multi-Slice Cache for Clinical Modalities (100% Offline Static Assets)
+  const sliceCache = {
+    ct: {},
+    mri: {},
+    xray: {}
   };
-  scanImages.ct.src = '/static/scans/ct.jpg';
-  scanImages.mri.src = '/static/scans/mri.jpg';
-  scanImages.xray.src = '/static/scans/xray.jpg';
 
-  // Redraw when any scan image finishes loading
-  Object.keys(scanImages).forEach(function (k) {
-    scanImages[k].onload = function () {
-      renderViewport();
-    };
-  });
+  function getSliceImage(scanType, sliceNum) {
+    if (scanType === 'xray') {
+      if (!sliceCache.xray[1]) {
+        const img = new Image();
+        img.src = '/static/scans/xray.jpg';
+        img.onload = function () { renderViewport(); };
+        sliceCache.xray[1] = img;
+      }
+      return sliceCache.xray[1];
+    }
+
+    if (!sliceCache[scanType]) {
+      sliceCache[scanType] = {};
+    }
+
+    const safeSlice = Math.max(1, Math.min(16, sliceNum || 1));
+    if (!sliceCache[scanType][safeSlice]) {
+      const img = new Image();
+      const padSlice = String(safeSlice).padStart(2, '0');
+      img.src = `/static/scans/${scanType}/slice_${padSlice}.jpg`;
+      img.onload = function () { renderViewport(); };
+      sliceCache[scanType][safeSlice] = img;
+    }
+    return sliceCache[scanType][safeSlice];
+  }
+
+  // Preload all 16 slices for CT and MRI upon initialization for instant scrubbing
+  function preloadSlices() {
+    getSliceImage('xray', 1);
+    for (let i = 1; i <= 16; i++) {
+      getSliceImage('ct', i);
+      getSliceImage('mri', i);
+    }
+  }
+  preloadSlices();
 
   // Render Real Open Source Clinical Scan Image (Aspect-Ratio Fitted)
-  function renderScanImage(w, h, scanType) {
-    const img = scanImages[scanType];
+  function renderScanImage(w, h, scanType, slice) {
+    const img = getSliceImage(scanType, slice);
     if (!img || !img.complete || img.naturalWidth === 0) {
       ctx.fillStyle = '#161616';
       ctx.fillRect(w * 0.1, h * 0.1, w * 0.8, h * 0.8);
       ctx.fillStyle = '#8d8d8d';
       ctx.font = '600 12px "IBM Plex Sans", system-ui, -apple-system, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('LOADING CLINICAL DICOM MODALITY: ' + scanType.toUpperCase(), w / 2, h / 2);
+      ctx.fillText(`LOADING CLINICAL DICOM MODALITY: ${scanType.toUpperCase()} (SLICE ${slice})`, w / 2, h / 2);
       return;
     }
 
