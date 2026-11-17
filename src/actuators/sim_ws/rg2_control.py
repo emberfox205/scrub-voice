@@ -109,13 +109,14 @@ class RG2Gripper:
 class MujocoRG2Adapter:
     """Adapter wrapping MujocoSimController with the RG2Gripper interface."""
 
-    def __init__(self, headless: bool = False):
-        from src.actuators.sim_ws.mujoco_controller import MujocoSimController
+    def __init__(self, headless: bool = False, sim_controller=None):
+        if sim_controller is not None:
+            self.sim = sim_controller
+        else:
+            from src.actuators.hal import get_shared_sim
+            self.sim = get_shared_sim(headless=headless)
         self.ip = "MuJoCo Simulation"
         self.port = 0
-        self.sim = MujocoSimController(headless=headless)
-        if not headless:
-            self.sim.start_viewer()
 
     def get_state(self) -> dict:
         return self.sim.get_gripper_state()
@@ -169,7 +170,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.sim:
+    use_sim = args.sim or os.getenv("ROBOT_BACKEND", "").lower() in ("sim", "simulation", "mujoco")
+    if use_sim:
         gripper = MujocoRG2Adapter(headless=args.headless)
     else:
         gripper = RG2Gripper(ip=args.ip)

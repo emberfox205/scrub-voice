@@ -57,3 +57,22 @@ explicit = true
 torch = { index = "pytorch-cpu" }
 torchaudio = { index = "pytorch-cpu" }
 
+[tool.pytest.ini_options]
+testpaths = ["test", "src"]
+python_files = ["test_*.py"]
+ignore = [
+    "test/test_asr_audio.py",
+    "test/test_dsp_listen.py",
+    "test/test_denoiser_eval.py",
+    "test/test_monitor_prompt.py",
+    "src/dsp/test/live_vad_hardware.py",
+    "src/dsp/test/live_streamer_vad.py",
+    "src/dsp/test/live_vad_localizer.py",
+    "src/dsp/test/live_beamformer_integration.py",
+    "src/dsp/test/plot_spatial_spectrum.py",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+

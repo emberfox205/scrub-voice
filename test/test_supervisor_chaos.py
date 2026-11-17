@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run supervisor chaos & process fault-recovery test (SIGKILL + auto-heal):
+#   python -m unittest test/test_supervisor_chaos.py
+#
+#   # 2. Verbose execution:
+#   python -m unittest -v test/test_supervisor_chaos.py
+# ==============================================================================
 """Supervisor & Chaos Recovery Integration Test.
 
 Verifies:
@@ -31,7 +40,11 @@ from src.orchestrator.supervisor import Supervisor
 
 TEST_PORT = 8899
 
+MODEL_WEIGHTS_FILE = REPO_ROOT / "src" / "nlu" / "models" / "setfit_bge-micro-v2_8k" / "model.safetensors"
+HAS_MODEL_WEIGHTS = MODEL_WEIGHTS_FILE.exists()
 
+
+@unittest.skipUnless(HAS_MODEL_WEIGHTS, "SetFit model.safetensors weights missing (see docs/ASSEMBLE_V1_INTEGRATION_REPORT.md)")
 class TestSupervisorChaos(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

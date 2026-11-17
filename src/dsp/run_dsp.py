@@ -36,7 +36,10 @@ if str(REPO_ROOT / "src" / "dsp") not in sys.path:
 
 from src.dsp.denoise.sota_onnx.deepfilternet_denoiser import DeepFilterDenoiser
 from src.dsp.denoise.sota_onnx.gtcrn_denoiser import GTCRNDenoiser
-from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
+try:
+    from src.dsp.denoise.stateless_onnx.stateless_duofilter_denoiser import DuoFilterDenoiser
+except ImportError:
+    DuoFilterDenoiser = None  # type: ignore
 from src.dsp.denoise.stateful_onnx.duofilter_streaming_denoiser import DuoFilterStreamingDenoiser
 from dsp.source.audio_streamer import AudioStreamer
 from dsp.source.beamformer import DASBeamformer
@@ -82,7 +85,18 @@ def run_dsp_service(
     vad_threshold: float = 0.5,
     realtime: bool = True,
     loop: bool = False,
-    dump_dir: Optional[Path] = None,
+    atten_lim_db: Optional[float] = 20.0,
+    split_band_hz: Optional[float] = 2500.0,
+    silence_hangover_sec: float = 1.5,
+    continuous_slope: bool = True,
+    f_low: float = 1000.0,
+    f_high: float = 3000.0,
+    atten_low_db: float = 12.0,
+    atten_high_db: float = 0.0,
+    dither_dbfs: Optional[float] = -65.0,
+    enable_snr_blend: bool = True,
+    snr_low_db: float = 8.0,
+    snr_high_db: float = 18.0,
 ) -> None:
     """Run the DSP streaming loop."""
     logger.info("Initializing DSP subsystems...")
@@ -107,16 +121,50 @@ def run_dsp_service(
         dtype = denoiser_type.lower()
         if dtype in ["duofilter", "duofilter_stateful"]:
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter_stateful.onnx"
-            denoiser = DuoFilterStreamingDenoiser(model_path=denoiser_model, threads=1)
+            denoiser = DuoFilterStreamingDenoiser(
+                model_path=denoiser_model,
+                threads=1,
+                atten_lim_db=atten_lim_db,
+                split_band_hz=split_band_hz,
+                continuous_slope=continuous_slope,
+                f_low=f_low,
+                f_high=f_high,
+                atten_low_db=atten_low_db,
+                atten_high_db=atten_high_db,
+                dither_dbfs=dither_dbfs,
+                enable_snr_blend=enable_snr_blend,
+                snr_low_db=snr_low_db,
+                snr_high_db=snr_high_db,
+            )
             # Warmup denoiser
             _ = denoiser.enhance_chunk(dummy_multichannel[0])
-            logger.info("Stateful DuoFilter ONNX denoiser initialized (0.5s chunk streaming).")
+            logger.info(
+                f"Stateful DuoFilter ONNX denoiser initialized (continuous_slope={continuous_slope}, atten_low_db={atten_low_db} dB, dither={dither_dbfs} dBFS, snr_blend={enable_snr_blend})."
+            )
         elif dtype == "duofilter_stateless":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "duofilter.onnx"
-            denoiser = DuoFilterDenoiser(model_path=denoiser_model, threads=1)
+            if DuoFilterDenoiser is None:
+                raise ImportError("DuoFilterDenoiser (stateless) is not available.")
+            denoiser = DuoFilterDenoiser(
+                model_path=denoiser_model,
+                threads=1,
+                atten_lim_db=atten_lim_db,
+                split_band_hz=split_band_hz,
+                continuous_slope=continuous_slope,
+                f_low=f_low,
+                f_high=f_high,
+                atten_low_db=atten_low_db,
+                atten_high_db=atten_high_db,
+                dither_dbfs=dither_dbfs,
+                enable_snr_blend=enable_snr_blend,
+                snr_low_db=snr_low_db,
+                snr_high_db=snr_high_db,
+            )
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info("Stateless DuoFilter ONNX denoiser initialized.")
+            logger.info(
+                f"Stateless DuoFilter ONNX denoiser initialized (continuous_slope={continuous_slope}, atten_low_db={atten_low_db} dB, dither={dither_dbfs} dBFS, snr_blend={enable_snr_blend})."
+            )
         elif dtype == "gtcrn":
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "gtcrn_simple.onnx"
             denoiser = GTCRNDenoiser(model_path=denoiser_model, threads=1)
@@ -127,10 +175,26 @@ def run_dsp_service(
             denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "onnx" / "deepfilternet.onnx"
             if not denoiser_model.exists():
                 denoiser_model = REPO_ROOT / "src" / "dsp" / "denoise" / "deepfilternet.onnx"
-            denoiser = DeepFilterDenoiser(model_path=denoiser_model, threads=1)
+            denoiser = DeepFilterDenoiser(
+                model_path=denoiser_model,
+                threads=1,
+                atten_lim_db=atten_lim_db,
+                split_band_hz=split_band_hz,
+                continuous_slope=continuous_slope,
+                f_low=f_low,
+                f_high=f_high,
+                atten_low_db=atten_low_db,
+                atten_high_db=atten_high_db,
+                dither_dbfs=dither_dbfs,
+                enable_snr_blend=enable_snr_blend,
+                snr_low_db=snr_low_db,
+                snr_high_db=snr_high_db,
+            )
             # Warmup denoiser
             _ = denoiser.enhance(dummy_multichannel[0])
-            logger.info("DeepFilterNet ONNX denoiser initialized.")
+            logger.info(
+                f"DeepFilterNet ONNX denoiser initialized (continuous_slope={continuous_slope}, atten_low_db={atten_low_db} dB, dither={dither_dbfs} dBFS, snr_blend={enable_snr_blend})."
+            )
         else:
             raise ValueError(f"Unknown denoiser type: {denoiser_type}. Supported: 'duofilter', 'duofilter_stateless', 'gtcrn', 'deepfilter'")
 
@@ -149,48 +213,9 @@ def run_dsp_service(
     )
 
     in_speech = False
+    silence_chunks = 0
+    hangover_silence_chunks = max(1, int(round(silence_hangover_sec / CHUNK_DURATION)))
     chunk_index = 0
-    utterance_count = 0
-    current_raw_mic1: list[np.ndarray] = []
-    current_beamformed: list[np.ndarray] = []
-    current_denoised: list[np.ndarray] = []
-    all_raw_mic1: list[np.ndarray] = []
-    all_beamformed: list[np.ndarray] = []
-    all_denoised: list[np.ndarray] = []
-
-    if dump_dir:
-        dump_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Audio dump enabled -> 3 stages (raw, beamformed, denoised) will be saved to {dump_dir}")
-
-    def save_current_utterance() -> None:
-        nonlocal utterance_count, current_raw_mic1, current_beamformed, current_denoised
-        if not dump_dir or not current_denoised:
-            return
-        utterance_count += 1
-        raw_m1 = np.concatenate(current_raw_mic1)
-        beam_m = np.concatenate(current_beamformed)
-        clean_m = np.concatenate(current_denoised)
-
-        raw_path = dump_dir / f"utterance_{utterance_count:03d}_1_raw_mic1.wav"
-        beam_path = dump_dir / f"utterance_{utterance_count:03d}_2_beamformed.wav"
-        clean_path = dump_dir / f"utterance_{utterance_count:03d}_3_denoised.wav"
-
-        sf.write(str(raw_path), raw_m1, SAMPLE_RATE)
-        sf.write(str(beam_path), beam_m, SAMPLE_RATE)
-        sf.write(str(clean_path), clean_m, SAMPLE_RATE)
-
-        rms_raw = float(np.sqrt(np.mean(raw_m1**2)))
-        rms_beam = float(np.sqrt(np.mean(beam_m**2)))
-        rms_clean = float(np.sqrt(np.mean(clean_m**2)))
-        db_diff = 20 * np.log10((rms_clean + 1e-9) / (rms_raw + 1e-9))
-
-        logger.info(
-            f"Saved utterance #{utterance_count:03d} -> [1] Raw: {raw_path.name} | [2] Beamformed: {beam_path.name} "
-            f"| [3] Denoised: {clean_path.name} (Delta: {db_diff:+.1f} dB, Duration: {len(clean_m)/SAMPLE_RATE:.2f}s)"
-        )
-        current_raw_mic1 = []
-        current_beamformed = []
-        current_denoised = []
 
     try:
         with streamer:
@@ -201,7 +226,6 @@ def run_dsp_service(
                     logger.info("Stream source reached EOF.")
                     if in_speech:
                         push.send_multipart([orjson.dumps({"type": "end"})])
-                        save_current_utterance()
                         in_speech = False
                     break
 
@@ -213,16 +237,27 @@ def run_dsp_service(
                 is_speech = vad.is_speech_active(chunk)
                 t_vad = (time.perf_counter() - t0) * 1000
 
+                vad_status_desc = "SPEECH"
                 if not is_speech:
                     if in_speech:
-                        # Speech just ended: send 'end' message to trigger final ASR transcription
-                        push.send_multipart([orjson.dumps({"type": "end"})])
-                        save_current_utterance()
-                        in_speech = False
-                        logger.info(f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR")
-                    continue
-
-                in_speech = True
+                        silence_chunks += 1
+                        if silence_chunks > hangover_silence_chunks:
+                            # Speech genuinely ended after sustained silence: send 'end' message to trigger final ASR transcription
+                            push.send_multipart([orjson.dumps({"type": "end"})])
+                            in_speech = False
+                            silence_chunks = 0
+                            logger.info(
+                                f"Chunk #{chunk_index:04d} | VAD: SILENCE ({t_vad:.1f}ms) -> Sent END to ASR (silence >= {silence_hangover_sec:.1f}s)"
+                            )
+                            continue
+                        else:
+                            # Within silence hangover window: keep utterance alive and stream audio chunk
+                            vad_status_desc = f"SILENCE-HANGOVER ({silence_chunks}/{hangover_silence_chunks})"
+                    else:
+                        continue
+                else:
+                    in_speech = True
+                    silence_chunks = 0
 
                 # Gate 2 & Mod 3: Spatial Localizer & DAS Beamformer
                 mono_audio = None
@@ -241,7 +276,10 @@ def run_dsp_service(
                 # Mod 4: Neural Denoiser
                 if denoiser is not None:
                     if hasattr(denoiser, "enhance_chunk"):
-                        clean_chunk = denoiser.enhance_chunk(mono_audio)
+                        try:
+                            clean_chunk = denoiser.enhance_chunk(mono_audio, is_speech=is_speech)
+                        except TypeError:
+                            clean_chunk = denoiser.enhance_chunk(mono_audio)
                     else:
                         clean_chunk = denoiser.enhance(mono_audio)
                 else:
@@ -252,36 +290,15 @@ def run_dsp_service(
                 rms_out = float(np.sqrt(np.mean(clean_chunk**2)))
                 chunk_db = 20 * np.log10((rms_out + 1e-9) / (rms_in + 1e-9))
 
-                # Extract Channel 0 (Microphone 1) for raw A/B/C comparison
-                raw_mic1_audio = chunk[0] if chunk.ndim > 1 else chunk
-
-                if dump_dir:
-                    current_raw_mic1.append(raw_mic1_audio.copy())
-                    current_beamformed.append(mono_audio.copy())
-                    current_denoised.append(clean_chunk.copy())
-                    all_raw_mic1.append(raw_mic1_audio.copy())
-                    all_beamformed.append(mono_audio.copy())
-                    all_denoised.append(clean_chunk.copy())
-
                 header = {"type": "chunk", "capture_time": capture_time}
                 push.send_multipart([orjson.dumps(header), clean_chunk.astype(np.float32).tobytes()])
                 logger.info(
-                    f"Chunk #{chunk_index:04d} | VAD: SPEECH ({t_vad:.1f}ms) | Angle: {angle_desc} | Denoise: {chunk_db:+.1f}dB -> Pushed 8000 samples to ASR"
+                    f"Chunk #{chunk_index:04d} | VAD: {vad_status_desc} ({t_vad:.1f}ms) | Angle: {angle_desc} | Denoise: {chunk_db:+.1f}dB -> Pushed 8000 samples to ASR"
                 )
 
     except KeyboardInterrupt:
         logger.info("DSP service interrupted by user.")
     finally:
-        if dump_dir:
-            save_current_utterance()
-            if all_denoised:
-                raw_session = dump_dir / "session_1_raw_mic1.wav"
-                beam_session = dump_dir / "session_2_beamformed.wav"
-                clean_session = dump_dir / "session_3_denoised.wav"
-                sf.write(str(raw_session), np.concatenate(all_raw_mic1), SAMPLE_RATE)
-                sf.write(str(beam_session), np.concatenate(all_beamformed), SAMPLE_RATE)
-                sf.write(str(clean_session), np.concatenate(all_denoised), SAMPLE_RATE)
-                logger.info(f"Saved full session 3 stages: {raw_session.name}, {beam_session.name}, {clean_session.name}")
         if in_speech:
             try:
                 push.send_multipart([orjson.dumps({"type": "end"})], flags=zmq.NOBLOCK)
@@ -308,8 +325,67 @@ def main() -> None:
     parser.add_argument("--vad-threshold", type=float, default=0.5, help="Silero VAD threshold")
     parser.add_argument("--fast", dest="realtime", action="store_false", help="Simulate faster than real time")
     parser.add_argument("--loop", action="store_true", help="Loop WAV file continuously")
-    parser.add_argument("--dump-audio", type=Path, default=None, help="Directory to save cleaned audio utterances and full session")
-    parser.set_defaults(denoise=True, spatial=True, realtime=True)
+    parser.add_argument(
+        "--atten-lim-db",
+        type=float,
+        default=20.0,
+        help="Attenuation limit in dB (default: 20.0 to preserve natural acoustic floor for ASR, or >= 100 for full suppression)",
+    )
+    parser.add_argument(
+        "--split-band-hz",
+        type=float,
+        default=2500.0,
+        help="Split-band frequency in Hz (default: 2500.0 to shield consonants for ASR, or 0 / >= 8000 to disable)",
+    )
+    parser.add_argument(
+        "--silence-hangover-sec",
+        type=float,
+        default=1.5,
+        help="Sustained silence duration (seconds) before DSP signals utterance end to ASR (default: 1.5s)",
+    )
+    parser.add_argument(
+        "--f-low",
+        type=float,
+        default=1000.0,
+        help="Low frequency transition boundary (Hz) for continuous psychoacoustic slope (default: 1000.0 Hz)",
+    )
+    parser.add_argument(
+        "--f-high",
+        type=float,
+        default=3000.0,
+        help="High frequency pass-through boundary (Hz) for consonant preservation (default: 3000.0 Hz)",
+    )
+    parser.add_argument(
+        "--atten-low-db",
+        type=float,
+        default=12.0,
+        help="Low-frequency attenuation limit in dB for rumble cleanup (default: 12.0 dB)",
+    )
+    parser.add_argument(
+        "--atten-high-db",
+        type=float,
+        default=0.0,
+        help="High-frequency attenuation limit in dB (default: 0.0 dB for 100%% pass-through)",
+    )
+    parser.add_argument(
+        "--dither-dbfs",
+        type=float,
+        default=-65.0,
+        help="Micro-dither floor in dBFS for Kaldi CMVN stabilization (default: -65.0 dBFS)",
+    )
+    parser.add_argument(
+        "--no-continuous-slope",
+        dest="continuous_slope",
+        action="store_false",
+        help="Disable continuous slope and revert to legacy split-band filter",
+    )
+    parser.add_argument(
+        "--no-snr-blend",
+        dest="snr_blend",
+        action="store_false",
+        help="Disable soft-knee SNR dynamic blending",
+    )
+    parser.set_defaults(denoise=True, spatial=True, realtime=True, continuous_slope=True, snr_blend=True)
 
     args = parser.parse_args()
     run_dsp_service(
@@ -322,7 +398,16 @@ def main() -> None:
         vad_threshold=args.vad_threshold,
         realtime=args.realtime,
         loop=args.loop,
-        dump_dir=args.dump_audio,
+        atten_lim_db=args.atten_lim_db,
+        split_band_hz=args.split_band_hz,
+        silence_hangover_sec=args.silence_hangover_sec,
+        continuous_slope=args.continuous_slope,
+        f_low=args.f_low,
+        f_high=args.f_high,
+        atten_low_db=args.atten_low_db,
+        atten_high_db=args.atten_high_db,
+        dither_dbfs=args.dither_dbfs,
+        enable_snr_blend=args.snr_blend,
     )
 
 

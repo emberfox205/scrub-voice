@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# HELPER / RUN COMMANDS:
+#   # 1. Run orchestrator dispatcher unit tests (topic routing & priority preemption):
+#   python -m unittest test/test_orchestrator.py
+#
+#   # 2. Verbose test execution:
+#   python -m unittest -v test/test_orchestrator.py
+# ==============================================================================
 """
 Unit tests for Scrub-Voice Central Command Dispatcher.
 
@@ -7,7 +15,6 @@ topic routing, and strict Dual-Channel priority preemption where
 emergency commands bypass normal queued commands.
 """
 
-import json
 import sys
 import time
 import unittest
@@ -18,7 +25,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import zmq
 from src.orchestrator.dispatcher import CommandDispatcher
 

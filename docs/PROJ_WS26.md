@@ -1,4 +1,4 @@
-# Project Documentation — Winter Semester 2026 (WS26)
+# Project Documentation — Winter Semester 2026 
 
 **Project Title:** An Offline, Noise-Robust, Edge Voice-to-Intent Assistant for Sterile Medical Environments
 
@@ -6,17 +6,13 @@
 
 ## 1. Project Proposal
 
-The formal project proposal outlines the clinical motivation, offline edge architecture (DSP, ASR, NLU), Universal Robots manipulator actuation missions, and experimental evaluation methodology.
-
+The formal project proposal outlines the clinical motivation, system architecture, planned evaluation strategies and benchmarks.
 * **Project Proposal:** [Overleaf Document](https://www.overleaf.com/read/xqsgnvbggydy#456ca6)
 
 ---
 
-## 2. Weekly Progress Reports
+## 2. Weekly Progress Report
 
-The ongoing weekly progress reports document sprint milestones, hardware/software integration status, and upcoming tasks.
+The ongoing weekly progress report documents complete and upcoming tasks.
+* **Weekly Report:** [Overleaf Document](https://www.overleaf.com/project/6ad6db50efbdb50193c3192f/share#baf2b152b73026bd1177e664d9e8c9ed9f6a3e5b5aa51037)
 
-| Week             | Date                 | Overleaf Report Link                                                                    |
-| :--------------- | :------------------- | :-------------------------------------------------------------------------------------- |
-| **Week 1** | **2026-09-21** | [Weekly Report — 2026-09-21](https://www.overleaf.com/project/6ab122964348ad1e6dbe62df) |
-| **Week 2** | **2026-10-06** | [Weekly Report — 2026-10-06](https://www.overleaf.com/project/6ac20e6f0c75917b37d9e6ce) |

@@ -51,7 +51,10 @@ DEFAULT_FRACTIONS: Dict[str, str] = {
 DEFAULT_IDIOMS: Dict[str, str] = {
     r"\btwice\b": "2x",
     r"\bthrice\b": "3x",
-    r"\bhalf\s*(?:a\s*)?(?:times|x)?\b": "0.5x"
+    r"\bhalf\s*(?:a\s*)?(?:times|x)?\b": "0.5x",
+    r"\bpull\s+up\b": "open",
+    r"\bmake\s+(?:it|view|display|screen|image)\s+bigger\b": "zoom in",
+    r"\bmake\s+(?:it|view|display|screen|image)\s+smaller\b": "zoom out"
 }
 
 DEFAULT_FILLERS: List[str] = [
@@ -229,6 +232,11 @@ class LexicalNormalizer:
 
         while i < n:
             token_lower = tokens[i].lower()
+
+            # Handle spoken "a" before scale (e.g. "a hundred" -> "100", "a thousand" -> "1000")
+            if token_lower == "a" and i + 1 < n and tokens[i + 1].lower() in self.scales:
+                tokens[i] = "one"
+                token_lower = "one"
 
             if token_lower in self.all_num_tokens:
                 j = i

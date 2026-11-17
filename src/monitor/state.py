@@ -31,11 +31,19 @@ class RobotTelemetry:
         return asdict(self)
 
 
+DEFAULT_SCAN_METADATA: Dict[str, Dict[str, Any]] = {
+    "ct": {"total_slices": 16, "name": "Computed Tomography (Axial Brain)", "planar": False},
+    "mri": {"total_slices": 16, "name": "Magnetic Resonance Imaging (Brain T1 Axial)", "planar": False},
+    "xray": {"total_slices": 1, "name": "Planar Radiograph (Chest PA)", "planar": True},
+}
+
+
 @dataclass
 class MonitorState:
     """Canonical intraoperative state cache for the monitor UI."""
     active_scan: Optional[str] = None  # "ct", "mri", "xray" or None
     current_slice: int = 1
+    total_slices: int = 16
     zoom_factor: float = 1.0  # Clamped between 1.0 and 10.0
     held_tool: Optional[str] = None  # "scalpel", "forceps", "scissors", "hemostat" or None
     recent_milestones: List[Dict[str, Any]] = field(default_factory=list)
@@ -58,6 +66,7 @@ class MonitorState:
             return {
                 "active_scan": self.active_scan,
                 "current_slice": self.current_slice,
+                "total_slices": self.total_slices,
                 "zoom_factor": round(zoom, 2),
                 "held_tool": self.held_tool,
                 "recent_milestones": list(self.recent_milestones) if self.recent_milestones else [],
@@ -112,6 +121,7 @@ class MonitorState:
         return cls(
             active_scan=data.get("active_scan"),
             current_slice=_safe_int(data.get("current_slice"), 1),
+            total_slices=_safe_int(data.get("total_slices"), 16),
             zoom_factor=_safe_float(data.get("zoom_factor"), 1.0),
             held_tool=data.get("held_tool"),
             recent_milestones=milestones,
@@ -126,4 +136,5 @@ class MonitorState:
         with self._lock:
             self.active_scan = None
             self.current_slice = 1
+            self.total_slices = 16
             self.zoom_factor = 1.0

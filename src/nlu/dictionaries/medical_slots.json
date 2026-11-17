@@ -25,11 +25,11 @@
     "RIGHT": ["right", "yaw right"]
   },
   "slice_directions": {
-    "NEXT": ["next", "forward", "ahead", "advance"],
-    "PREVIOUS": ["previous", "prev", "back", "backward", "reverse", "rewind"]
+    "NEXT": ["next", "forward", "ahead", "advance", "scroll", "scroll forward", "scroll down", "go forward"],
+    "PREVIOUS": ["previous", "prev", "back", "backward", "reverse", "rewind", "scroll back", "scroll up", "go back"]
   },
   "zoom_directions": {
-    "IN": ["in", "closer", "magnify", "increase"],
-    "OUT": ["out", "wider", "reduce", "decrease"]
+    "IN": ["in", "closer", "magnify", "increase", "enlarge", "bigger", "make it bigger"],
+    "OUT": ["out", "wider", "reduce", "decrease", "shrink", "smaller", "make it smaller"]
   }
 }

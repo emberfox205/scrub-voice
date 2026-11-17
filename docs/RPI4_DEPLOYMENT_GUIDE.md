@@ -42,7 +42,7 @@ Modern Raspberry Pi OS (Debian Bookworm) uses managed Python environments (`PEP 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install --upgrade pip
+pip install --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 ```
 
 ---
@@ -59,49 +59,64 @@ pip install -r requirements-rpi.txt
 
 ---
 
-## 5. Running the Intent Classifier
+## 5. Running Edge Verification & Benchmarks
 
-### Option A: Full Test (Automated Benchmark + Interactive Testing)
+### Option A: Edge Verification Test (`test/test_edge.py`)
+Validates cold-start loading time, resident memory footprint, CPU core affinity, and 100% JSON schema compliance against [`schemas/command_schema.json`](../schemas/command_schema.json):
 ```bash
-python test/test_rpi_intent.py
+python test/test_edge.py
 ```
 
-### Option B: Automated Latency & RAM Benchmark Only
-Evaluates all 12 surgical commands, calculates mean/min/max/P95 latency, and measures process memory footprint:
-```bash
-python test/test_rpi_intent.py --benchmark --runs 5
-```
-
-### Option C: Live Interactive Command Prompt Only
-Type voice utterances in real-time to inspect intent predictions:
-```bash
-python test/test_rpi_intent.py --interactive
-```
-
-Example session:
+Example output:
 ```text
-Initializing Edge NLU System on Raspberry Pi 4...
-✓ Model loaded in 1.42s
-✓ Memory Delta: +210.4 MB (Total RSS: 254.1 MB)
-
-🎙️ INTERACTIVE NLU TEST (Type 'exit' or 'quit' to stop)
-=================================================================
-
-Enter voice command > zoom into the patient's wound
- → Intent    : ZOOM_IN
- → Confidence: 99.4%
- → Latency   : 41.20 ms
-
-Enter voice command > switch to next slice
- → Intent    : SLICE_NEXT
- → Confidence: 98.7%
- → Latency   : 38.65 ms
-
-Enter voice command > what time is it
- → Intent    : OUT_OF_SCOPE
- → Confidence: 99.1%
- → Latency   : 39.10 ms
+============================================================
+       SCRUB-VOICE EDGE NLU PROFILER (Raspberry Pi 4)
+============================================================
+[1/4] Measuring Cold-Start Model Load...
+  -> Model loaded in 0.78s
+[2/4] Measuring Baseline Resident Memory (RSS)...
+  -> Memory Delta: +50.0 MB (Total RSS: 254.1 MB)
+[3/4] Validating Core Affinity & Latency...
+  -> Pinned to CPU Core: 1
+  -> Mean Inference Latency: 7.45 ms (Budget: 25.0 ms)
+[4/4] Validating 100% Command Schema Compliance across 13 Intents...
+  -> Validated 85/85 command envelopes against Draft 2020-12 schema.
+  -> Out-of-domain conversational chatter successfully rejected.
+============================================================
+STATUS: ALL EDGE GUARDS PASSED
+============================================================
 ```
+
+### Option B: Isolated NLU Benchmark Suite (`test/benchmarks/bench_nlu.py`)
+Evaluates intent accuracy, slot extraction F1 score, Wilson 95% confidence intervals, and PyTorch CPU thread scaling:
+```bash
+python test/benchmarks/bench_nlu.py --reps-nlu 5 --nlu-thread-sweep --out results/nlu
+```
+
+### Option C: Live Interactive Prompt Console (`test/test_monitor_prompt.py`)
+Type natural language commands in real time to verify intent classification and slot extraction against the Intraoperative Monitor:
+```bash
+python test/test_monitor_prompt.py
+```
+
+### Option D: Dual-Terminal SSH Operator Workflow
+When connected to the Raspberry Pi over SSH, run the full pipeline in one terminal and control/monitor commands interactively in a second terminal:
+
+**Terminal 1 (Pipeline Supervisor & Daemons):**
+```bash
+# Starts Monitor, NLU, ASR, DSP, and persistent Actuator services
+python -m src.orchestrator.supervisor --enable-actuators
+```
+
+**Terminal 2 (Prompt Console & Operator Mode Control):**
+```bash
+# Direct tool command
+python test/test_monitor_prompt.py --pick-tool scalpel
+
+# Or interactive menu with operational mode switching ([M])
+python test/test_monitor_prompt.py
+```
+*Note: Ensure the arm is parked (`park_arm`) before switching operational modes from `TOOL_HANDLING` to `CAMERA_LIGHT`.*
 
 ---
 

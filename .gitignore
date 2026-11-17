@@ -55,3 +55,24 @@ data/asr/noise_only/
 
 # Heavy Binary
 *.safetensors
+artifacts/
+
+# Temporary archives, patches, and deployment bundles
+*.patch
+*.diff
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+
+.agents/
+
+# Machine learning model weights
+*.pt
+
+# Simulator & test debug artifacts
+MUJOCO_LOG.TXT
+sim_*.jpg
+sim_*.png
+

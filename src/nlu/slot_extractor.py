@@ -44,8 +44,13 @@ DEFAULT_CAMERA_TILT_DIRS = {
 }
 
 DEFAULT_SLICE_DIRS = {
-    "NEXT": ["next", "forward", "ahead", "advance"],
-    "PREVIOUS": ["previous", "prev", "back", "backward", "reverse", "rewind"]
+    "NEXT": ["next", "forward", "ahead", "advance", "scroll", "scroll forward", "scroll down", "go forward"],
+    "PREVIOUS": ["previous", "prev", "back", "backward", "reverse", "rewind", "scroll back", "scroll up", "go back"]
+}
+
+DEFAULT_ZOOM_DIRS = {
+    "IN": ["in", "closer", "magnify", "increase", "enlarge", "bigger", "make it bigger"],
+    "OUT": ["out", "wider", "reduce", "decrease", "shrink", "smaller", "make it smaller"]
 }
 
 DEFAULT_CONSTRAINTS = {
@@ -104,13 +109,18 @@ def string_similarity(s1: str, s2: str) -> float:
 def find_canonical_in_dict(text: str, category_dict: Dict[str, List[str]], threshold: float = 0.82) -> Optional[str]:
     text_lower = text.lower()
     
-    # 1. Exact substring check across aliases
+    # Flatten and sort all (canonical, alias) pairs longest-first to ensure multi-word phrases match before single-word sub-tokens
+    all_pairs: List[Tuple[str, str]] = []
     for canonical, aliases in category_dict.items():
         for alias in aliases:
-            # Word boundary check
-            pattern = r"\b" + re.escape(alias) + r"\b"
-            if re.search(pattern, text_lower):
-                return canonical
+            all_pairs.append((canonical, alias))
+    all_pairs.sort(key=lambda x: len(x[1]), reverse=True)
+
+    # 1. Exact substring check across aliases (longest first)
+    for canonical, alias in all_pairs:
+        pattern = r"\b" + re.escape(alias) + r"\b"
+        if re.search(pattern, text_lower):
+            return canonical
 
     # 2. Token & bigram fuzzy matching
     words = re.findall(r"\w+", text_lower)
@@ -118,11 +128,10 @@ def find_canonical_in_dict(text: str, category_dict: Dict[str, List[str]], thres
     for i in range(len(words) - 1):
         tokens.append(f"{words[i]} {words[i+1]}")
 
-    for canonical, aliases in category_dict.items():
+    for canonical, alias in all_pairs:
         for token in tokens:
-            for alias in aliases:
-                if string_similarity(token, alias) >= threshold:
-                    return canonical
+            if string_similarity(token, alias) >= threshold:
+                return canonical
     return None
 
 # ---------------------------------------------------------------------------
@@ -163,6 +172,7 @@ class SlotExtractor:
                     self.camera_move_dirs = data.get("camera_move_directions", DEFAULT_CAMERA_MOVE_DIRS)
                     self.camera_tilt_dirs = data.get("camera_tilt_directions", DEFAULT_CAMERA_TILT_DIRS)
                     self.slice_dirs = data.get("slice_directions", DEFAULT_SLICE_DIRS)
+                    self.zoom_dirs = data.get("zoom_directions", DEFAULT_ZOOM_DIRS)
                     self.view_planes = data.get("view_planes", {})
             except Exception:
                 self._use_default_slots()
@@ -186,6 +196,7 @@ class SlotExtractor:
         self.camera_move_dirs = DEFAULT_CAMERA_MOVE_DIRS
         self.camera_tilt_dirs = DEFAULT_CAMERA_TILT_DIRS
         self.slice_dirs = DEFAULT_SLICE_DIRS
+        self.zoom_dirs = DEFAULT_ZOOM_DIRS
         self.view_planes = {}
 
     def extract(self, intent: str, text: str) -> Dict[str, Any]:
@@ -238,11 +249,9 @@ class SlotExtractor:
 
     def _extract_zoom_display(self, text: str) -> Dict[str, Any]:
         slots: Dict[str, Any] = {}
-        text_lower = text.lower()
-        if re.search(r"\b(?:in|magnify|closer)\b", text_lower):
-            slots["direction"] = "IN"
-        elif re.search(r"\b(?:out|wider|reduce)\b", text_lower):
-            slots["direction"] = "OUT"
+        d = find_canonical_in_dict(text, self.zoom_dirs, threshold=self.threshold)
+        if d:
+            slots["direction"] = d
 
         cfg = self.constraints.get("zoom_display") or self.constraints.get("zoom", DEFAULT_CONSTRAINTS["zoom_display"])
         min_f = cfg.get("min_factor", 1.1)
@@ -365,7 +374,7 @@ class SlotExtractor:
         # Check intent-specific triggers & slot requirements
         if predicted_intent == "pick_tool":
             # Must contain a pick verb OR a valid tool name
-            has_verb = bool(re.search(r"\b(hand|pass|give|pick|bring)\b", text_lower))
+            has_verb = bool(re.search(r"\b(hand|pass|give|pick|bring|need|require)\b", text_lower))
             tool = slots.get("tool_identifier")
             if not tool:
                 # If it had pick verb, it's ambiguous; if it had neither, it's OOD
@@ -396,7 +405,7 @@ class SlotExtractor:
 
         elif predicted_intent == "open_scan":
             scan = slots.get("scan_type")
-            has_verb = bool(re.search(r"\b(open|show|display|load|bring up|view)\b", text_lower))
+            has_verb = bool(re.search(r"\b(open|show|display|load|bring up|view|pull up)\b", text_lower))
             if not scan:
                 if has_verb:
                     return "open_scan", "MONITOR_DISPLAY", "NORMAL", {}, "AMBIGUOUS"
@@ -416,7 +425,8 @@ class SlotExtractor:
             return "close_scan", "MONITOR_DISPLAY", "NORMAL", clean_slots, "EXECUTE"
 
         elif predicted_intent == "zoom_display":
-            has_trigger = bool(re.search(r"\b(zoom|magnify|magnification)\b", text_lower))
+            zoom_terms = [re.escape(alias) for aliases in self.zoom_dirs.values() for alias in aliases] + ["zoom", "magnification"]
+            has_trigger = bool(re.search(r"\b(?:" + "|".join(zoom_terms) + r")\b", text_lower))
             if not has_trigger:
                 return "unknown", "UNKNOWN", "LOW", {}, "OUT-OF-DOMAIN"
             clean_slots = {}
@@ -425,11 +435,17 @@ class SlotExtractor:
             if "factor" in slots and isinstance(slots["factor"], (int, float)):
                 if 1.1 <= slots["factor"] <= 10.0:
                     clean_slots["factor"] = float(slots["factor"])
+            if not clean_slots:
+                # Neither direction nor factor was spoken (e.g. bare "zoom") -> AMBIGUOUS
+                return "zoom_display", "MONITOR_DISPLAY", "NORMAL", {}, "AMBIGUOUS"
             return "zoom_display", "MONITOR_DISPLAY", "NORMAL", clean_slots, "EXECUTE"
 
         elif predicted_intent == "navigate_slice":
-            # Must contain slice navigation terms
-            has_trigger = bool(re.search(r"\b(slice|slices|frame|frames|advance|jump|step|next|previous|prev|back|rewind)\b", text_lower))
+            # Must contain slice navigation terms from dictionary or navigation keywords
+            slice_terms = [re.escape(alias) for aliases in self.slice_dirs.values() for alias in aliases] + [
+                "slice", "slices", "frame", "frames", "advance", "jump", "step", "scroll"
+            ]
+            has_trigger = bool(re.search(r"\b(?:" + "|".join(slice_terms) + r")\b", text_lower))
             if not has_trigger:
                 return "unknown", "UNKNOWN", "LOW", {}, "OUT-OF-DOMAIN"
             

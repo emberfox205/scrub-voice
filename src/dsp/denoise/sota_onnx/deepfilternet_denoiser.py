@@ -4,6 +4,12 @@ import onnxruntime as ort
 import soundfile as sf
 import torch
 import torchaudio
+
+from src.dsp.denoise.continuous_slope_denoiser import (
+    ContinuousSlopeGainFloor,
+    SoftKneeSNRBlender,
+)
+from typing import Optional
 from torch import Tensor
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -45,12 +51,21 @@ def make_erb_filterbank(sample_rate, n_fft, erb_bins, low_freq=0.0, high_freq=No
 def erb_synthesis_matrix(filterbank: Tensor, eps: float = 1e-8) -> Tensor:
     return filterbank.T / filterbank.sum(dim=0, keepdim=True).T.clamp_min(eps)
 
-def apply_erb_gains(input_spec: Tensor, gains: Tensor, synthesis_matrix: Tensor) -> Tensor:
+def apply_erb_gains(
+    input_spec: Tensor,
+    gains: Tensor,
+    synthesis_matrix: Tensor,
+    atten_lim_db: float | None = 20.0,
+) -> Tensor:
     if gains.ndim != 4 or gains.shape[1] != 1:
         raise ValueError("gains must have shape [B, 1, T, E]")
-        
-    frequency_gain = gains[:, 0] @ synthesis_matrix.T    # -> [B, T, F]
-    
+
+    if atten_lim_db is not None and atten_lim_db < 100.0:
+        min_gain = 10.0 ** (-atten_lim_db / 20.0)
+        gains = torch.clamp(gains, min=min_gain)
+
+    frequency_gain = gains[:, 0] @ synthesis_matrix.T  # -> [B, T, F]
+
     return input_spec.transpose(1, 2) * frequency_gain.to(input_spec.dtype)
 
 def apply_deep_filter(stage1_spec: Tensor, coefficients: Tensor, alpha: Tensor, df_bins: int = 96, df_order: int = 5, lookahead: int = 0) -> Tensor:
@@ -116,9 +131,21 @@ class DeepFilterDenoiser:
         erb_bins: int = 32,
         df_bins: int = 96,
         threads: int = 1,
+        atten_lim_db: float | None = 20.0,
+        split_band_hz: float | None = 2500.0,
+        continuous_slope: bool = True,
+        f_low: float = 1000.0,
+        f_high: float = 3000.0,
+        atten_low_db: float = 12.0,
+        atten_high_db: float = 0.0,
+        dither_dbfs: Optional[float] = -65.0,
+        enable_snr_blend: bool = True,
+        snr_low_db: float = 8.0,
+        snr_high_db: float = 18.0,
+        phase_preservation: bool = True,
     ):
         if model_path is None:
-            onnx_sub = CURRENT_DIR / "onnx" / "deepfilternet.onnx"
+            onnx_sub = DENOISE_DIR / "onnx" / "deepfilternet.onnx"
             model_path = onnx_sub if onnx_sub.exists() else CURRENT_DIR / "deepfilternet.onnx"
         self.model_path = Path(model_path)
         self.sample_rate = sample_rate
@@ -127,6 +154,59 @@ class DeepFilterDenoiser:
         self.win_length = win_length
         self.erb_bins = erb_bins
         self.df_bins = df_bins
+        self.atten_lim_db = atten_lim_db
+        self.split_band_hz = split_band_hz
+        self.continuous_slope = continuous_slope
+        self.f_low = f_low
+        self.f_high = f_high
+        self.atten_low_db = atten_low_db
+        self.atten_high_db = atten_high_db
+        self.phase_preservation = phase_preservation
+        self.enable_snr_blend = enable_snr_blend
+
+        n_bins = self.n_fft // 2 + 1
+
+        if self.continuous_slope:
+            slope_atten_low = self.atten_low_db
+            if atten_lim_db is not None and atten_lim_db != 20.0 and atten_low_db == 12.0:
+                slope_atten_low = atten_lim_db
+            self.gain_floor_builder = ContinuousSlopeGainFloor(
+                n_fft=self.n_fft,
+                sample_rate=self.sample_rate,
+                f_low=self.f_low,
+                f_high=self.f_high,
+                atten_low_db=slope_atten_low,
+                atten_high_db=self.atten_high_db,
+            )
+            self.gain_floor = self.gain_floor_builder.get_torch_floor((1, 1, n_bins))
+            self.split_weights = None
+        else:
+            self.gain_floor = None
+            # Precompute Split-Band Consonant Shield weights if enabled
+            if self.split_band_hz is not None and 0 < self.split_band_hz < (self.sample_rate / 2):
+                bin_hz = self.sample_rate / self.n_fft
+                split_bin = int(round(self.split_band_hz / bin_hz))
+                transition_bins = 8
+                half_trans = max(1, transition_bins // 2)
+                start_bin = max(0, split_bin - half_trans)
+                end_bin = min(n_bins, split_bin + half_trans)
+
+                weights = torch.ones(n_bins, dtype=torch.float32)
+                if start_bin < end_bin:
+                    weights[start_bin:end_bin] = torch.linspace(1.0, 0.0, end_bin - start_bin)
+                weights[end_bin:] = 0.0
+                self.split_weights: Optional[torch.Tensor] = weights.view(1, 1, n_bins)
+            else:
+                self.split_weights = None
+
+        self.dither_dbfs = dither_dbfs
+        self.dither_std: Optional[float] = (
+            10.0 ** (dither_dbfs / 20.0) if dither_dbfs is not None else None
+        )
+        self.snr_blender = SoftKneeSNRBlender(
+            snr_low_db=snr_low_db,
+            snr_high_db=snr_high_db,
+        )
 
         torch.set_num_threads(threads)
         options = ort.SessionOptions()
@@ -174,7 +254,9 @@ class DeepFilterDenoiser:
         df_coefficients = torch.from_numpy(outputs[1])
         alpha = torch.from_numpy(outputs[2])
 
-        stage1_spec = apply_erb_gains(input_spec, erb_gains, self.synthesis_matrix)
+        stage1_spec = apply_erb_gains(
+            input_spec, erb_gains, self.synthesis_matrix, atten_lim_db=self.atten_lim_db
+        )
         final_spec = apply_deep_filter(
             stage1_spec=stage1_spec,
             coefficients=df_coefficients,
@@ -183,6 +265,26 @@ class DeepFilterDenoiser:
             df_order=5,
             lookahead=1,
         )
+
+        raw_spec = input_spec.transpose(1, 2)
+        if self.continuous_slope and self.gain_floor is not None:
+            # Pillar 1 & 2: Continuous Psychoacoustic Slope + Strict Phase Preservation
+            raw_mag = torch.clamp(raw_spec.abs(), min=1e-12)
+            enh_mag = torch.clamp(final_spec.abs(), min=1e-12)
+            floor_mag = self.gain_floor.to(device=enh_mag.device) * raw_mag
+            effective_mag = torch.maximum(enh_mag, floor_mag)
+
+            if self.phase_preservation:
+                raw_phase = torch.angle(raw_spec)
+                final_spec = effective_mag * torch.exp(1j * raw_phase)
+            else:
+                scale = effective_mag / enh_mag
+                final_spec = final_spec * scale
+        else:
+            # Split-Band Consonant Shield: Preserve raw/beamformed audio in high frequencies (> split_band_hz)
+            if self.split_weights is not None:
+                final_spec = self.split_weights * final_spec + (1.0 - self.split_weights) * raw_spec
+
         enh_wav = torch.istft(
             final_spec.transpose(1, 2),
             n_fft=self.n_fft,
@@ -191,7 +293,21 @@ class DeepFilterDenoiser:
             window=self.window,
             length=orig_len,
         )
-        return enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+        clean_out = enh_wav.squeeze(0).cpu().numpy().astype(np.float32)
+
+        # Pillar 3: Micro-Dither Injection (-65 dBFS floor)
+        if self.dither_std is not None and self.dither_std > 0:
+            dither = np.random.normal(0.0, self.dither_std, size=clean_out.shape).astype(np.float32)
+            clean_out = clean_out + dither
+
+        # Pillar 4: Soft-Knee SNR Dynamic Blend
+        if self.enable_snr_blend:
+            clean_out, _, _ = self.snr_blender.blend(
+                denoised=clean_out,
+                beamformed=audio[:orig_len],
+            )
+
+        return clean_out.astype(np.float32)
 
 
 if __name__ == "__main__":

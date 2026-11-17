@@ -9,7 +9,7 @@ every config and every intent (the manifest `notes` column):
 
 Run from the repository root:
     python src/asr/scripts/per_intent.py
-    python src/asr/scripts/per_intent.py --configs vosk-grammar,faster-whisper-tiny.en-beam1+prompt
+    python src/asr/scripts/per_intent.py --configs vosk-grammar,vosk-grammar+freeform-log
 """
 
 import argparse

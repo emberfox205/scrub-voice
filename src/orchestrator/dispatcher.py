@@ -24,7 +24,18 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import jsonschema
-import orjson
+try:
+    import orjson
+except ImportError:
+    import json
+    class _OrjsonCompat:
+        @staticmethod
+        def dumps(obj, *args, **kwargs):
+            return json.dumps(obj).encode("utf-8")
+        @staticmethod
+        def loads(obj, *args, **kwargs):
+            return json.loads(obj)
+    orjson = _OrjsonCompat()
 import zmq
 
 # Dynamic path resolution according to AGENTS.md
@@ -98,6 +109,9 @@ class CommandDispatcher:
 
     def setup_sockets(self) -> None:
         """Initializes and binds ZeroMQ sockets for dual-channel routing and snapshot serving."""
+        if self.pull_sock is not None and not self.pull_sock.closed:
+            return
+
         if self.context is None or self.context.closed:
             self.context = zmq.Context()
             self._stopped = False
@@ -177,6 +191,8 @@ class CommandDispatcher:
 
         try:
             payload = orjson.loads(raw_msg)
+            if not isinstance(payload, dict):
+                raise ValueError(f"Payload must be a JSON object, got {type(payload).__name__}")
         except Exception as err:
             logger.error("Failed to decode JSON payload: %s", err)
             self._send_error("JSON_DECODE_ERROR", str(err))
