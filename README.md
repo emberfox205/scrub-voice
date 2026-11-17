@@ -18,7 +18,7 @@ An Offline, Noise-Robust, Edge Voice-to-Intent Assistant for Sterile Medical Env
 
 ---
 
-## Quick Start (Minimal Setup: Mic + Pi 4 + Web Browser + Sim)
+## Quick Start 
 
 This quick start walks through a minimal edge deployment:
 - **Microphone:** ReSpeaker / Seeed 8-channel array (or USB mic / test WAV) connected to the Raspberry Pi 4.
