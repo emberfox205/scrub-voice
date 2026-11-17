@@ -1,18 +1,18 @@
 {
   "translation_offset_m": {
-    "dx": -0.04309,
-    "dy": 0.01528,
-    "dz": -0.14484
+    "dx": 0.04805,
+    "dy": 0.07108,
+    "dz": -0.19006
   },
   "translation_offset_mm": {
-    "dx": -43.1,
-    "dy": 15.3,
-    "dz": -144.8
+    "dx": 48.05,
+    "dy": 71.08,
+    "dz": -190.06
   },
   "tilt_offset_deg": {
-    "rx": 34.51,
-    "ry": -358.34,
-    "rz": 0.02
+    "rx": 0.10,
+    "ry": 9.12,
+    "rz": -179.56
   },
   "calibration_poses": {
     "camera_tcp": [
@@ -34,7 +34,7 @@
     "gripper_tcp": [
       -0.5891,
       0.01788,
-      0.02561,
+      0.0151,
       0.30114,
       -3.1271,
       0.0002
@@ -48,5 +48,106 @@
       -2.0966
     ]
   },
-  "calibrated_at": "2026-10-13T08:42:23.162394+00:00"
+  "hand_eye_transform_tcp_to_cam": {
+    "matrix_4x4": [
+      [
+        -0.999993,
+        0.003593,
+        -0.000931,
+        0.048048
+      ],
+      [
+        -0.00348,
+        -0.994844,
+        -0.101357,
+        0.071076
+      ],
+      [
+        -0.00129,
+        -0.101353,
+        0.99485,
+        -0.190063
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "rotation_matrix": [
+      [
+        -0.999993,
+        0.003593,
+        -0.000931
+      ],
+      [
+        -0.00348,
+        -0.994844,
+        -0.101357
+      ],
+      [
+        -0.00129,
+        -0.101353,
+        0.99485
+      ]
+    ],
+    "rotation_rotvec": [
+      0.001745,
+      0.159234,
+      -3.134008
+    ],
+    "translation_m": [
+      0.048048,
+      0.071076,
+      -0.190063
+    ],
+    "translation_mm": [
+      48.05,
+      71.08,
+      -190.06
+    ]
+  },
+  "gripper_exclusion_polygon": [
+    [
+      0.500,
+      1.000
+    ],
+    [
+      0.525,
+      0.780
+    ],
+    [
+      0.555,
+      0.690
+    ],
+    [
+      0.620,
+      0.650
+    ],
+    [
+      0.740,
+      0.650
+    ],
+    [
+      0.820,
+      0.700
+    ],
+    [
+      1.000,
+      0.780
+    ],
+    [
+      1.000,
+      1.000
+    ]
+  ],
+  "notes": {
+    "camera_mount_bracket": "PickNik Robotics UR RealSense Camera Adapter (picknik_accessories)",
+    "pitch_bent_angle_deg": 6.0,
+    "calibrated_scan_height_tcp_z_m": 0.2523,
+    "table_contact_height_tcp_z_m": 0.0151,
+    "usage_warning": "Full 6-DOF Hand-Eye matrix ensures rotation-invariant and height-invariant coordinate projections across arbitrary tray positions."
+  },
+  "calibrated_at": "2026-11-08T10:30:00+07:00"
 }

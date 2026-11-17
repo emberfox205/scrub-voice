@@ -35,21 +35,21 @@
     <body name="hand_link" pos="0 0 0" childclass="rg2">
       <inertial mass="1.68" pos="0.06 0 0" diaginertia="0.00086 0.0024 0.0026"/>
       <geom type="mesh" mesh="hand_vis" material="rg2_chassis"/>
-      <geom class="rg2_col" type="mesh" mesh="hand_col"/>
+      <geom name="hand_col" class="rg2_col" type="mesh" mesh="hand_col"/>
 
       <!-- Left Moment Arm -->
       <body name="l_moment_arm_link" pos="0.105 0.017 0.010">
         <inertial mass="0.16" pos="0.017 -0.006 0" diaginertia="0.000023 0.000072 0.000083"/>
         <joint name="gripper_joint" range="-0.45 0.9"/>
         <geom type="mesh" mesh="l_moment_vis" material="rg2_aluminum"/>
-        <geom class="rg2_col" type="mesh" mesh="l_moment_col"/>
+        <geom name="l_moment_col" class="rg2_col" type="mesh" mesh="l_moment_col"/>
 
         <!-- Left Finger Link -->
         <body name="l_finger_link" pos="0.049 0.026 0.000">
           <inertial mass="0.08" pos="0.025 -0.01 0" diaginertia="0.000006 0.000025 0.000026"/>
           <joint name="l_finger_2_joint" range="-0.9 0.45"/>
           <geom type="mesh" mesh="l_finger_vis" material="rg2_aluminum"/>
-          <geom class="rg2_col" type="mesh" mesh="l_finger_col"/>
+          <geom name="l_finger_col" class="rg2_col" type="mesh" mesh="l_finger_col"/>
         </body>
       </body>
 
@@ -58,7 +58,7 @@
         <inertial mass="0.066" pos="0.023 0.012 0" diaginertia="0.000010 0.000024 0.000025"/>
         <joint name="l_finger_passive_joint" range="-0.45 0.9"/>
         <geom type="mesh" mesh="l_truss_vis" material="rg2_aluminum"/>
-        <geom class="rg2_col" type="mesh" mesh="l_truss_col"/>
+        <geom name="l_truss_col" class="rg2_col" type="mesh" mesh="l_truss_col"/>
       </body>
 
       <!-- Right Moment Arm -->
@@ -66,14 +66,14 @@
         <inertial mass="0.16" pos="0.017 0.006 0" diaginertia="0.000023 0.000072 0.000083"/>
         <joint name="r_finger_1_joint" range="-0.9 0.45"/>
         <geom type="mesh" mesh="r_moment_vis" material="rg2_aluminum"/>
-        <geom class="rg2_col" type="mesh" mesh="r_moment_col"/>
+        <geom name="r_moment_col" class="rg2_col" type="mesh" mesh="r_moment_col"/>
 
         <!-- Right Finger Link -->
         <body name="r_finger_link" pos="0.049 -0.026 0.000">
           <inertial mass="0.08" pos="0.025 0.01 0" diaginertia="0.000006 0.000025 0.000026"/>
           <joint name="r_finger_2_joint" range="-0.45 0.9"/>
           <geom type="mesh" mesh="r_finger_vis" material="rg2_aluminum"/>
-          <geom class="rg2_col" type="mesh" mesh="r_finger_col"/>
+          <geom name="r_finger_col" class="rg2_col" type="mesh" mesh="r_finger_col"/>
         </body>
       </body>
 
@@ -82,11 +82,11 @@
         <inertial mass="0.066" pos="0.023 -0.012 0" diaginertia="0.000010 0.000024 0.000025"/>
         <joint name="r_finger_passive_joint" range="-0.9 0.45"/>
         <geom type="mesh" mesh="r_truss_vis" material="rg2_aluminum"/>
-        <geom class="rg2_col" type="mesh" mesh="r_truss_col"/>
+        <geom name="r_truss_col" class="rg2_col" type="mesh" mesh="r_truss_col"/>
       </body>
 
-      <!-- TCP Site -->
-      <site name="rg2_tcp" pos="0.20 0 0.01" size="0.005" rgba="1 0 0 0.8"/>
+      <!-- TCP Site calibrated at RG-2 fingertips -->
+      <site name="rg2_tcp" pos="0.20 -0.00195 0.00451" quat="0.499596 -0.499753 0.498662 -0.501983" size="0.004" rgba="1 0 0 0.8"/>
     </body>
   </worldbody>
 

@@ -16,7 +16,8 @@ scrub-voice/
 ├── requirements.txt
 ├── data/
 │   ├── asr/
-│   └── dsp/
+│   ├── dsp/
+│   └── vision/
 ├── docs/
 ├── evaluations/
 │   ├── asr/
@@ -48,10 +49,11 @@ scrub-voice/
 
 ### `data/`
 
-* **Purpose:** Store audio datasets.
+* **Purpose:** Store audio and visual datasets.
 * **Subdirectories:**
   * `asr/`: Sample single-channel speech commands (WAV format) for transcription validation.
   * `dsp/`: Multi-channel recordings from circular microphone arrays across various SNR and diffuse noise configurations.
+  * `vision/`: Sample instrument and tray images (`desk.jpg`) for offline validation and pipeline testing without hardware.
 * **Rule:** Generated/processed audio outputs must not be committed to Git; keep them directed to `.gitignore` output paths (`data/dsp/output/`).
 
 ### `docs/`

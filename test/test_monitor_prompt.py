@@ -371,18 +371,21 @@ def run_preset(sender: MonitorPromptSender, preset_name: str) -> None:
     print(f"\n[+] Preset '{preset_name}' execution finished.")
 
 
-def interactive_loop(sender: MonitorPromptSender) -> None:
+def interactive_loop(sender: MonitorPromptSender, initial_mode: str = "TOOL_HANDLING") -> None:
     """Runs the interactive console prompt loop."""
+    current_mode = initial_mode
     print("\n" + "=" * 70)
     print("      SCRUB-VOICE STANDARDIZED MONITOR PROMPT INTERFACE")
     print("=" * 70)
     print("  Make sure the monitor service is running:")
     print("  uv run python src/orchestrator/run_monitor_service.py")
     print("  Dashboard UI: http://localhost:8000")
+    print(f"  Current Operational Mode: {current_mode}")
     print("-" * 70)
     print("  Quick Menu Options:")
     for key, desc, phrase in MENU_OPTIONS:
         print(f"    [{key:>2}] {desc:<35} -> \"{phrase}\"")
+    print("    [ M] Switch Operational Mode (TOOL_HANDLING / CAMERA_LIGHT)")
     print("    [ p] Run 'routine' surgical workflow preset")
     print("    [ q] Quit")
     print("-" * 70)
@@ -391,7 +394,7 @@ def interactive_loop(sender: MonitorPromptSender) -> None:
 
     while True:
         try:
-            user_input = input("monitor-prompt > ").strip()
+            user_input = input(f"monitor-prompt [{current_mode}] > ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting.")
             break
@@ -402,6 +405,11 @@ def interactive_loop(sender: MonitorPromptSender) -> None:
             break
         if user_input.lower() in ("p", "preset"):
             run_preset(sender, "routine")
+            continue
+        if user_input.lower() in ("m", "mode"):
+            target_mode = "CAMERA_LIGHT" if current_mode == "TOOL_HANDLING" else "TOOL_HANDLING"
+            current_mode = target_mode
+            print(f"[*] Operational mode switched to: {current_mode}")
             continue
 
         # Check menu numbers
@@ -443,6 +451,12 @@ Examples:
     parser.add_argument("prompt", nargs="*", help="Optional free-text prompt to parse and send")
     parser.add_argument("--addr", default=DEFAULT_NLU_ADDR, help="Normal NLU ZeroMQ address")
     parser.add_argument("--priority-addr", default=DEFAULT_PRIO_ADDR, help="Priority NLU ZeroMQ address")
+    parser.add_argument(
+        "--mode",
+        choices=["TOOL_HANDLING", "CAMERA_LIGHT"],
+        default="TOOL_HANDLING",
+        help="Active operational mode (default: TOOL_HANDLING)",
+    )
 
     # Direct Command Options
     cmd_group = parser.add_argument_group("Direct Command Arguments")
@@ -465,6 +479,11 @@ Examples:
     sender = MonitorPromptSender(nlu_addr=args.addr, prio_addr=args.priority_addr)
 
     try:
+        # Mode validation for tool handling commands
+        if args.mode != "TOOL_HANDLING" and (args.pick_tool or args.park_arm):
+            print(f"[-] Rejection: Robot is in {args.mode} mode; cannot execute tool handling without switching mode.")
+            return
+
         # 1. Preset sequences
         if args.preset:
             run_preset(sender, args.preset)
@@ -515,7 +534,7 @@ Examples:
         if payload:
             sender.send(payload)
         elif not any([args.preset, args.halt, args.clear, args.open_scan, args.close_scan, args.zoom_in, args.zoom_out, args.slice, args.next_slice, args.prev_slice, args.pick_tool, args.park_arm, args.log_event, args.prompt]):
-            interactive_loop(sender)
+            interactive_loop(sender, initial_mode=args.mode)
     finally:
         sender.close()
 

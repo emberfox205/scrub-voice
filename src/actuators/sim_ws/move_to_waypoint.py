@@ -13,13 +13,21 @@ import sys
 import time
 from pathlib import Path
 
-try:
-    import rtde_control
-    import rtde_receive
-except ImportError:
-    print("[ERROR] ur-rtde is not installed. Please activate the 'ur_arm' environment.")
-    sys.exit(1)
+# Dynamic sys.path setup according to AGENTS.md Rule 4
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
+from src.actuators.hal import get_robot_interfaces
+
+
+# --- Calibrated Tray Z Coordinates ---
+# 1. Scanning / Standoff Height (tray_pose): TCP Z = 0.17045 m (~17.0 cm)
+#    Camera views the tray; (dx=-43.1mm, dy=+15.3mm) offset is valid at this height.
+# 2. Table Contact / Grasp Height (tray_contact_pose): TCP Z = 0.02561 m (~2.56 cm)
+#    RG-2 gripper fingertips touch table surface to grasp tools (dz = -0.14484 m plunge).
+CALIBRATED_SCAN_Z_M = 0.17045
+CALIBRATED_TABLE_Z_M = 0.02561
 
 WAYPOINTS_FILE = Path(__file__).resolve().parent.parent / "waypoints.json"
 CANDIDATE_IPS = [
@@ -73,6 +81,8 @@ def main():
     parser.add_argument("--offset-y", type=float, default=0.0, help="Cartesian Y offset in meters (using poseTrans)")
     parser.add_argument("--offset-z", type=float, default=0.0, help="Cartesian Z offset in meters (using poseTrans)")
     parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    parser.add_argument("--sim", action="store_true", help="Execute motion in MuJoCo physics simulation")
+    parser.add_argument("--headless", action="store_true", help="Run simulation in headless mode without 3D GUI window")
     args = parser.parse_args()
 
     waypoints = load_waypoints(WAYPOINTS_FILE)
@@ -86,14 +96,14 @@ def main():
     target_deg = target_data.get("joints_deg", [round(x * 57.2958, 1) for x in target_joints])
     target_tcp = target_data.get("tcp_pose", [])
 
-    robot_ip = resolve_robot_ip(args.robot_ip)
+    robot_ip = resolve_robot_ip(args.robot_ip) if not args.sim else "MuJoCo Simulation"
     print("=" * 60)
     print(f" Target Waypoint : {args.pose}")
     print(f" Target Joints   : {target_joints}")
     print(f" Target Degrees  : {target_deg}")
     if target_tcp:
         print(f" Target TCP Pose : {target_tcp}")
-    print(f" Robot IP        : {robot_ip}")
+    print(f" Robot IP / Sim  : {robot_ip}")
     print(f" Speed / Accel   : {args.speed} rad/s, {args.accel} rad/s²")
     print("=" * 60)
 
@@ -105,10 +115,13 @@ def main():
 
     print(f"Connecting to UR RTDE at {robot_ip}...")
     try:
-        rtde_r = rtde_receive.RTDEReceiveInterface(robot_ip)
-        rtde_c = rtde_control.RTDEControlInterface(robot_ip)
+        rtde_c, rtde_r = get_robot_interfaces(
+            robot_ip=args.robot_ip,
+            sim=args.sim,
+            headless=args.headless if args.sim else None,
+        )
     except Exception as e:
-        print(f"[ERROR] Could not connect to robot at {robot_ip}: {e}")
+        print(f"[ERROR] Could not connect to robot interfaces: {e}")
         sys.exit(1)
 
     actual_q = rtde_r.getActualQ()
@@ -131,8 +144,11 @@ def main():
             target_trans = rtde_c.poseTrans(current_tcp, offset)
             print(f"Applying poseTrans offset {offset[:3]} m...")
             print(f"Target Cartesian TCP: {[round(x, 4) for x in target_trans]}")
-            rtde_c.moveL(target_trans, speed=0.05, acceleration=0.1)
-            print(f"✓ Reached offset pose!")
+            move_l_ok = rtde_c.moveL(target_trans, speed=0.05, acceleration=0.1)
+            if move_l_ok:
+                print(f"✓ Reached offset pose!")
+            else:
+                print(f"[WARN] moveL returned False (target may be unreachable).")
     except Exception as e:
         print(f"[ERROR] Motion failed: {e}")
     finally:
