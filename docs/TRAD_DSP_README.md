@@ -1,251 +1,183 @@
-# Digital Signal Processing (DSP) Module
+# Digital Signal Processing (DSP) & Target Speaker Extraction (TSE) Module
 
-This module implements the edge acoustic front-end for `scrub-voice`. It is designed for multi-channel circular microphone arrays operating in noisy, reverberant clinical environments (such as operating rooms with surgical suction, ventilation, and patient monitors).
+This module implements the real-time edge acoustic front-end for `scrub-voice`. It is designed for multi-channel circular microphone arrays operating in noisy, reverberant clinical environments (such as operating rooms with surgical suction pumps, laminar-flow ventilation, and patient vitals monitors).
 
-The pipeline ingests raw multi-channel audio from hardware, filters acoustic artifacts, identifies human speech activity, calculates sound source direction of arrival (DoA), and isolates target speakers using spatial beamforming with **multi-beam Soft Wiener post-filtering**, delivering clean isolated single-channel audio streams directly to downstream Automatic Speech Recognition (ASR) and Natural Language Understanding (NLU).
+The pipeline ingests raw multi-channel audio from hardware, filters acoustic artifacts, identifies human speech activity, calculates 2D sound source Direction of Arrival (DoA) using **pure frequency-domain SRP-CLEAN spatial deflation**, steers constructive beams with **multi-beam Soft Wiener post-filtering**, and enforces **ECAPA-TDNN biometric speaker verification** to isolate the Lead Surgeon's voice from circulating nurses and auxiliary staff.
 
 ---
 
 ## 1. Architecture & Pipeline Overview
 
-The front-end is organized as a phased gating and processing pipeline to minimize computational load on edge hardware (e.g., Raspberry Pi 4):
+The front-end is organized as a 4-Gate cascading pipeline optimized for real-time execution on resource-constrained edge hardware (Raspberry Pi 4, Quad-Core ARM Cortex-A72):
 
 ```mermaid
 flowchart TD
-    HW["Seeed 6-Mic Circular Array\n(8-Channel ALSA PCM @ 16 kHz)"] --> Streamer["AudioStreamer\n(Strips AEC Ch 6-7, Normalizes to float32)"]
-    Streamer -->|"Audio Chunk (6, 8000)"| VAD{"Gate 1: SileroVAD\n(Window Voting >= 3)"}
+    HW["Seeed ReSpeaker 6-Mic Circular Array\n(8-Ch ALSA PCM @ 16 kHz)"] --> Streamer["AudioStreamer\n(Strips Loopback Ch 6-7, Slices (6, 8000) float32)"]
+    Streamer -->|"Chunk (6, 8000)"| VAD{"Gate 1: Silero VAD\n(Mic 0 Reference, Window Voting >= 3)"}
     
-    VAD -- "No Speech (Silence/Noise)" --> Discard["Discard / Sleep\n(Saves CPU Cycles)"]
-    VAD -- "Speech Detected" --> Localizer{"Gate 2: SRPLocalizer\n(Spatial Coherence & DoA)"}
+    VAD -- "Silence / Mechanical Noise" --> Discard["Discard / Standby\n(Saves CPU Cycles)"]
+    VAD -- "Speech Detected" --> Localizer{"Gate 2: SRPLocalizer (SRP-CLEAN)\n- Spatial Nulling in STFT\n- Collision & Reflection Suppression"}
     
-    Localizer -- "Flat Power (PAR < 1.15)\nDiffuse Noise / Reverberation" --> Discard
-    Localizer -- "Valid Peak Azimuth(s)\n[θ₁, θ₂, ...]" --> Beamformer["Module 3: DASBeamformer\n- Center-Padding COLA\n- Multi-Beam Soft Wiener Masking"]
+    Localizer -- "Diffuse Field / Echo (PAR < 1.15)" --> Discard
+    Localizer -- "Active Sources [θ₁, θ₂, ...]" --> Beamformer["Module 3: DASBeamformer\n- Center-Padding COLA iSTFT\n- Adaptive Soft Wiener Masking"]
     
-    Beamformer -->|"Isolated Mono Stream(s)"| Verifier{"Gate 4: SpeakerVerifier\n(ECAPA-TDNN ONNX Biometrics)"}
-    Verifier -- "Similarity < Threshold\n(Nurse / Assistant / Fan)" --> Suppress["Suppress / Background Tag"]
-    Verifier -- "Similarity >= Threshold\n(Lead Surgeon / Doctor)" --> DoctorStream["Target Doctor Audio Stream\n→ Downstream ASR & NLU Engine"]
+    Beamformer -->|"Enhanced Audio Stream(s)"| Tracker["Candidate Buffer & Tracking\n(Accumulates 1.5s Tumbling Window)"]
+    Tracker --> Verifier{"Gate 4: SpeakerVerifier\n(ECAPA-TDNN 192-D Biometrics)"}
+    
+    Verifier -- "Cosine Similarity < 0.40\n(Nurse / Assistant / Noise)" --> Suppress["Suppressed / Auxiliary Stream"]
+    Verifier -- "Cosine Similarity >= 0.40\n(Lead Surgeon / Doctor)" --> DoctorStream["Target Doctor Audio Stream\n→ live_target_doctor.wav / ASR Engine"]
 ```
 
 ---
 
 ## 2. Core Submodules
 
-### 2.1. Audio Streamer (`source/audio_streamer.py`)
-
-Handles low-latency, uninterrupted streaming from the microphone hardware via standard ALSA subprocesses.
-
-* **Target Hardware:** Seeed ReSpeaker 6-Mic Circular Array for Raspberry Pi (via `plughw:seeed8micvoicec,0`).
-* **Hardware Channel Mapping:**
-  * Physical capture delivers 8 interleaved channels: channels `0` to `5` correspond to circular microphones 1–6; channels `6` and `7` carry hardware Acoustic Echo Cancellation (AEC) playback loopback data.
-  * `AudioStreamer` strips channels 6 and 7, retaining only the 6 circular microphone sensors.
-* **Buffer Management:**
-  * Uses `arecord` with `--buffer-time=500000` (500 ms ALSA driver buffer) to prevent buffer underruns (XRUNs) under heavy Raspberry Pi CPU loads.
-  * Chunks are emitted in configurable durations (default `0.5 s` = 8,000 samples at 16 kHz).
-* **Data Contract:**
-  * Output shape: `(6, 8000)` (`(num_mics, num_samples)`).
-  * Data type: `float32`, normalized from 16-bit signed PCM to `[-1.0, 1.0]`.
-* **Graceful Lifecycle Management:**
-  * Supports Python context manager (`with AudioStreamer() as streamer:`).
-  * Shutdown closes the stdout pipe and issues a `SIGINT` signal to `arecord`, allowing the ALSA kernel driver to close cleanly without driver lockups or device-busy deadlocks.
+### 2.1. Shared Configuration (`source/circuit_framing_config.py`)
+Encapsulates physical array geometry and STFT framing parameters into shared, reusable contracts to guarantee SOLID design:
+* **`CircularMicrophoneArray`:**
+  * Radius: $r = 0.04625\text{ m}$ ($46.25\text{ mm}$).
+  * Microphones: 6 circular capsules at angles `[300°, 240°, 180°, 120°, 60°, 0°]`.
+  * Precomputes 3D steering phase tensors: `(360, num_mics, num_freqs)`.
+* **`AudioFramingConfig`:**
+  * Sample rate: $16,000\text{ Hz}$.
+  * Frame size: $512$ samples ($32\text{ ms}$).
+  * Hop size: $256$ samples ($16\text{ ms}$, 50% overlap).
 
 ---
 
-### 2.2. Voice Activity Detection — Gate 1 (`source/vad.py`)
-
-Acts as the first computational gate, determining whether an incoming multi-channel audio buffer contains active human speech before activating downstream spatial algorithms.
-
-* **Model:** Pretrained Silero VAD neural network (`snakers4/silero-vad`).
-* **Multichannel Reduction:**
-  * Averages acoustic energy across all active microphones (`np.mean(audio_chunk, axis=0)`) to yield a high-SNR composite reference signal.
-* **Inference & Window Voting:**
-  * Evaluates audio in non-overlapping sub-windows of 512 samples (~32 ms at 16 kHz).
-  * Uses **Window Voting (`speech_windows >= 3`)**: Requires at least 3 active sub-windows (~100 ms) within a 0.5s chunk to flag active speech, filtering transient mechanical clicks and wind puffs.
-  * Preserves RNN recurrent hidden states across chunk boundaries to ensure seamless phonetic transitions without mid-sentence audio fragmentation.
-  * If no speech is present, downstream localization, beamforming, and speaker verification are skipped entirely, saving edge processor cycles.
+### 2.2. Audio Streamer (`source/audio_streamer.py`)
+Handles low-latency, hardware-buffered audio capture directly from ALSA or offline WAV replay:
+* **Target Hardware:** Seeed ReSpeaker 6-Mic Circular Array (`plughw:seeed8micvoicec,0`).
+* **Channel Demuxing:** Captures 8 interleaved hardware channels, drops channels 6 and 7 (hardware AEC loopback), and emits the 6 microphone channels.
+* **Buffer Stability:** Configured with `--buffer-time=500000` (500 ms ALSA driver buffer) to eliminate driver overruns (XRUNs).
+* **Data Contract:** Emits normalized float32 chunks of shape `(6, 8000)` in range `[-1.0, 1.0]`.
+* **Simulation Mode:** Pass `wav_path="path/to/test.wav"` for hardware-free development and offline CI benchmarking.
 
 ---
 
-### 2.3. Sound Source Localizer — Gate 2 (`source/localizer.py`)
-
-Calculates 2D azimuth Direction of Arrival (DoA) using Steered Response Power with Phase Transform (SRP-PHAT) and validates spatial coherence.
-
-* **Array Geometry:**
-  * Circular planar array with radius $r = 0.04625$ m (46.25 mm).
-  * 6 microphones configured at angles: `[300°, 240°, 180°, 120°, 60°, 0°]`.
-* **Precomputed Spatial Steering:**
-  * Discrete azimuth grid with 1° resolution covering 360° (`[0°, 1°, ..., 359°]`).
-  * Relative theoretical delay for azimuth $\theta$ and microphone $m$:
-    $$\tau(\theta, m) = \frac{r}{c} \cos(\theta - \phi_m)$$
-    where $c = 343.0\text{ m/s}$.
-  * Precomputes full steering phase tensor of shape `(360, num_mics, num_freqs)`.
-* **Frequency Band Selection:**
-  * Evaluates Short-Time Fourier Transform (STFT) frames (frame size 512, hop size 256, Hann window).
-  * Bounded to the human speech band (`100 Hz` to `3500 Hz`), filtering out high-frequency surgical tool hiss and electrical low-frequency hum.
-* **Spatial Coherence Gating (Gate 2 Check):**
-  * Computes steered power across all 360 directions and evaluates the Peak-to-Average Ratio:
-    $$\text{PAR} = \frac{\max(P_{360})}{\text{mean}(P_{360}) + \epsilon}$$
-  * If $\text{PAR} < \text{par\_threshold}$ (default `1.15`), the sound field lacks directional coherence (characteristic of diffuse room noise, air conditioning, or late reverberation). The gate closes and returns an empty angle list `[]`.
-* **Multi-Speaker Peak Detection:**
-  * Applies 30° circular padding to prevent detection dropouts at the $0^\circ / 360^\circ$ boundary.
-  * Detects peaks using `scipy.signal.find_peaks` with minimum angular distance (15°), peak prominence (0.15), and minimum relative height (0.25).
-  * Returns deduplicated list of speaker angles (e.g., `[60.0, 180.0]`) and the normalized spatial power curve.
+### 2.3. Voice Activity Detection — Gate 1 (`source/vad.py`)
+Acts as the first filter to prevent unnecessary spatial and neural computation during silent periods:
+* **Model:** Deep-learning based Silero VAD neural network (`snakers4/silero-vad:master`).
+* **Offline-First Loading:** Automatically loads from local cache (`~/.cache/torch/hub/snakers4_silero-vad_master`) using `source='local'`, preventing network latency and HTTP 504 timeouts on the Pi.
+* **Phase Preservation:** Uses **Mic 0 (`audio_chunk[0]`)** as the single reference channel. This eliminates destructive multi-mic phase cancellation that occurs when averaging across circular arrays.
+* **Inference Logic:** Evaluates 512-sample sub-windows. A chunk is classified as active speech if $\ge 3$ sub-windows exceed the speech threshold ($0.50$).
 
 ---
 
-### 2.4. Delay-and-Sum Beamformer with Multi-Beam Soft Wiener Masking (`source/beamformer.py`)
-
-Steers focused constructive acoustic beams toward target speakers and isolates competing sound sources using Time-Frequency spatial post-filtering.
-
-* **Steering & Reconstruction:**
-  * Operates across the full frequency spectrum (0 Hz to Nyquist 8000 Hz, 257 bins for 512-point FFT).
-  * Precomputed steering weights tensor with $\frac{1}{M}$ normalization:
-    $$W_m(f, \theta) = \frac{1}{M} \exp\left(j 2 \pi f \cdot \frac{r}{c} \cos(\theta - \phi_m)\right)$$
-  * Multi-target support: Steers multiple beams simultaneously across target angles using vectorized tensor operations.
-* **Multi-Beam Soft Wiener Post-Filtering (`apply_wiener_mask=True`):**
-  * When multiple speakers are present (e.g., Lead Surgeon at 60° and Scrub Nurse at 180°), Delay-and-Sum beamforming alone leaves residual cross-talk. To eliminate competing talkers without introducing the harsh musical noise of binary masks, the beamformer applies a continuous **Soft Wiener Gain Mask**:
-    1. Computes instantaneous spectrogram power for each beam across all time-frequency bins:
-       $$P_k(f, t) = |Y_k(f, t)|^2, \quad k \in \{1, \dots, K\}$$
-    2. Sums total power across all active beams: $P_{\text{total}}(f, t) = \sum_{j=1}^K P_j(f, t)$.
-    3. Calculates the competing interference power for target $k$:
-       $$P_{\text{interf}, k}(f, t) = P_{\text{total}}(f, t) - P_k(f, t) = \sum_{j \ne k} P_j(f, t)$$
-    4. Computes the smooth Wiener ratio with over-subtraction factor $\alpha$ (default `1.3`) and safety floor (default `0.10`, limiting max attenuation to $-20\text{ dB}$ to preserve acoustic naturalness):
-       $$W_k(f, t) = \text{clip}\left(\frac{P_k(f, t)}{P_k(f, t) + \alpha \cdot P_{\text{interf}, k}(f, t) + \epsilon}, \text{floor}, 1.0\right)$$
-    5. Directly scales the complex STFT coefficients in-place ($Y_k \leftarrow Y_k \cdot W_k$), achieving $>20\text{ dB}$ cross-talk suppression while maintaining smooth phase transitions.
-* **Center-Padding COLA Synthesis (Click & Gap Elimination):**
-  * Symmetrically pads boundaries (`pad_left = 256`, `pad_right = 448`, reflection mode) before STFT analysis.
-  * Reconstructs via inverse STFT (`irfft`) and Hann window Overlap-Add (OLA). The original 8000 samples fall entirely within the flat Constant Overlap-Add (COLA) zone ($\sum w^2(n) = 1.0$).
-  * Slices `[pad_left : pad_left + num_samples]`, completely eliminating the 4ms silence hole and boundary clicks across consecutive 0.5s streaming chunks.
-* **Data Contract:**
-  * Input: `audio_chunk` of shape `(6, N)`, `target_angles` (scalar `float` or `List[float]`).
-  * Output: Single 1D array `(N,)` (if single angle) or `List[np.ndarray]` each of shape `(N,)` (if list of angles).
+### 2.4. Sound Source Localizer — Gate 2 (`source/localizer.py`)
+Computes 2D azimuth Direction of Arrival (DoA) using **pure frequency-domain SRP-CLEAN (Steered Response Power with Spatial Deflation)**:
+* **Frequency Range:** Bounded to `100 Hz - 3500 Hz` by default. Bounding below the spatial aliasing limit ($f_{\text{alias}} \approx 3700\text{ Hz}$) of the $46.25\text{ mm}$ circular array suppresses spatial grating lobes.
+* **Spatial Deflation Loop (Pure SRP-CLEAN):**
+  Instead of zero-masking angular power (which creates artificial cliff-edge discontinuities), SRP-CLEAN subtracts the beamformed signal in the STFT complex domain:
+  $$Y_{\text{dom}}(t, f) = \frac{1}{M} \sum_{m=1}^M X_m(t, f) \cdot e^{j \phi_m(\theta_{\text{dom}}, f)}$$
+  $$X_m(t, f) \leftarrow X_m(t, f) - Y_{\text{dom}}(t, f) \cdot e^{-j \phi_m(\theta_{\text{dom}}, f)}$$
+* **Triple-Defense Halting Criteria:**
+  1. **Spatial Flatness (PAR):** Stops if $\text{PAR} = \frac{\max(P)}{\text{mean}(P)} < 1.15$ (diffuse room noise / flat residual field).
+  2. **Collision Check:** Halts if the candidate peak falls within $\pm 15^\circ$ of an already detected speaker.
+  3. **Room Echo & Reflection Rejection:** Halts if the candidate peak's power in the un-deflated initial field is below threshold (`pass1_power[dom_idx] < 0.35`) or if residual power falls below relative floor (`max_p < 0.25 * pass1_max`). This prevents microscopic wall reflections from being magnified into false secondary talkers.
 
 ---
 
-### 2.5. Speaker Verification & Biometrics — Gate 4 (`source/speaker_verifier.py`)
-
-Performs Target Speaker Extraction (TSE) using a lightweight ONNX Runtime execution of ECAPA-TDNN (Emphasized Channel Attention, Propagation and Aggregation in TDNN).
-
-* **Model & Quantization:**
-  * Checkpoint: `src/dsp/models/ecapa_tdnn/voxceleb_ECAPA512.onnx` (~24 MB, trained on VoxCeleb).
-  * Executes via `onnxruntime` with intra-op threading tuned for ARM Cortex-A72 cores.
-  * Average inference latency on CPU: $\approx 35\text{ ms} - 45\text{ ms}$.
-* **Feature Extraction:**
-  * Converts 16 kHz mono beamformed audio into 80-bin Log-Mel Filterbank energies (`kaldi.fbank`, 25 ms frame length, 10 ms frame shift, Hamming window).
-  * Applies utterance-level Cepstral Mean Normalization (CMVN).
-* **Embedding & Voice Biometrics:**
-  * Outputs an L2-normalized 192-dimensional speaker embedding vector $\mathbf{e} \in \mathbb{R}^{192}$ ($\|\mathbf{e}\|_2 = 1.0$).
-  * Verifies incoming audio against the enrolled Lead Surgeon / Doctor reference embedding using Cosine Similarity:
-    $$\text{Similarity}(\mathbf{e}_{\text{cand}}, \mathbf{e}_{\text{doc}}) = \mathbf{e}_{\text{cand}} \cdot \mathbf{e}_{\text{doc}} \in [-1.0, 1.0]$$
-  * Rejects candidate beams below `similarity_threshold` (default `0.65`), filtering out auxiliary staff chatter, circulating nurses, and background acoustic noise before reaching the clinical ASR engine.
+### 2.5. Delay-and-Sum Beamformer with Soft Wiener Masking (`source/beamformer.py`)
+Extracts clean, separated directional audio streams for all active speakers simultaneously:
+* **Center-Padding COLA Synthesis:**
+  Symmetrically pads input chunks with reflection (`pad_left = 256`, `pad_right = 448`). The original 8000 samples fall entirely within the flat Constant Overlap-Add (COLA) zone ($\sum w^2(n) = 1.0$), completely eliminating boundary clicks and 4ms silence gaps across consecutive chunks.
+* **Multi-Beam Soft Wiener Masking:**
+  When multiple competing talkers are active ($K > 1$), computes continuous time-frequency Wiener gain masks:
+  $$W_k(f, t) = \text{clip}\left(\frac{P_k(f, t)}{P_k(f, t) + \alpha_{\text{eff}} \cdot \sum_{j \ne k} P_j(f, t) + \epsilon}, 0.10, 1.0\right)$$
+  where $\alpha_{\text{eff}} = \frac{\alpha}{\max(1, K-1)}$ dynamically scales with speaker count. Suppresses cross-talk by $> 20\text{ dB}$ with zero musical noise.
 
 ---
 
-## 3. Module File Structure
+### 2.6. Speaker Verification & Biometrics — Gate 4 (`source/speaker_verifier.py`)
+Provides the final biometric gate to enforce Target Speaker Extraction (TSE):
+* **Model:** Pretrained ECAPA-TDNN ONNX model (`models/ecapa_tdnn/voxceleb_ECAPA512.onnx`, ~24 MB).
+* **Embedding:** Extracts a 192-dimensional L2-normalized biometric speaker embedding from 80-bin Log-Mel filterbanks.
+* **Decision Rule:** Computes Cosine Similarity against the enrolled Lead Surgeon embedding:
+  $$\text{Score} = \mathbf{e}_{\text{candidate}} \cdot \mathbf{e}_{\text{doctor}} \ge \tau$$
+  In the real-time streaming pipeline (`run_pipeline.py`), $\tau = 0.40$ (optimized for 1.5s tumbling candidate windows; standalone default is $0.65$). Scores $\ge \tau$ route the audio to the doctor stream, while auxiliary staff and background voices are suppressed.
+
+---
+
+### 2.7. Lead Surgeon Voice Enrollment (`source/enroll_doctor.py`)
+* **Zero-Restart Live Enrollment:** Enrolls the doctor on the active audio stream upon pipeline boot if `doctor_profile.npy` is missing.
+* **VAD-Supervised Ingestion:** Collects $3.5\text{ seconds}$ of active speech chunks verified by VAD, extracts the 192-D profile, and persists it to disk.
+
+---
+
+### 2.8. Live Execution Pipeline (`source/run_pipeline.py`)
+The primary production runner on Raspberry Pi 4:
+* **Pre-Flight Memory Warm-Up:** Initializes all 4 stages in RAM before opening the ALSA stream to guarantee zero startup latency spikes.
+* **Active Speaker Tracking:** Tracks speaker azimuths across frames with a configurable memory hangover (`MAX_TTL_FRAMES = 2` to `5`).
+* **Real-Time Performance:** Average frame processing latency is **$180 - 320\text{ ms}$** on Raspberry Pi 4 (well within the $500\text{ ms}$ real-time budget, $\text{RTF} \approx 0.4$).
+* **Safe Shutdown (`Ctrl+C`):** Automatically saves synchronized recordings to `data/dsp/output/`:
+  * `live_raw.wav`: Multi-speaker raw microphone reference.
+  * `live_target_doctor.wav`: Isolated, verified Lead Surgeon command audio.
+
+---
+
+## 3. Directory Layout
 
 ```text
 src/dsp/
-├── __init__.py
-├── denoise/                       # Standalone DeepFilterNet models & ONNX exports (excluded from this guide)
 ├── models/
 │   └── ecapa_tdnn/
-│       └── voxceleb_ECAPA512.onnx # Pretrained ECAPA-TDNN ONNX voice biometrics (~24 MB)
+│       ├── voxceleb_ECAPA512.onnx    # ECAPA-TDNN ONNX neural network weights (~24 MB)
+│       └── doctor_profile.npy        # 192-D biometric voiceprint of the Lead Surgeon
 ├── source/
 │   ├── __init__.py
-│   ├── audio_streamer.py          # ALSA arecord hardware capture & buffer stripping
-│   ├── vad.py                     # Gate 1: Silero VAD speech activity detection (Window Voting)
-│   ├── localizer.py               # Gate 2: SRP-PHAT DoA localization & PAR gating
-│   ├── beamformer.py              # Module 3: Delay-and-Sum beamformer with Soft Wiener & Center-COLA
-│   └── speaker_verifier.py        # Gate 4: ECAPA-TDNN ONNX speaker verification engine
+│   ├── audio_streamer.py             # ALSA hardware capture & buffer stripping
+│   ├── circuit_framing_config.py     # Shared geometric array & STFT framing contracts
+│   ├── vad.py                        # Gate 1: Silero VAD speech activity detection
+│   ├── localizer.py                  # Gate 2: SRP-CLEAN spatial deflation localizer
+│   ├── beamformer.py                 # Module 3: DAS beamformer with Soft Wiener & Center-COLA
+│   ├── speaker_verifier.py           # Gate 4: ECAPA-TDNN ONNX speaker verification
+│   ├── enroll_doctor.py              # Zero-restart live doctor voice enrollment
+│   └── run_pipeline.py               # Real-time multi-gate live execution pipeline
 └── test/
     ├── __init__.py
-    ├── unittest_AudioStreamer.py      # Unit tests for hardware streaming buffer slicing
-    ├── unittest_VAD.py                # Unit tests for Silero VAD gating & sensitivity
-    ├── unittest_localizer_level1.py   # Unit tests for SRP-PHAT geometry & synthetic DoA
-    ├── unittest_localizer_level2.py   # Boundary wrap-around & multi-speaker peak tests
-    ├── unittest_beamformer.py         # Unit tests for DAS steering, Wiener mask & COLA slicing
-    ├── unittest_speaker_verifier.py   # Unit tests & latency benchmarks for ECAPA-TDNN
-    ├── test_VAD_AudioStreamer.py      # Integration test for AudioStreamer and VAD
-    ├── test_live_vad_localizer.py     # Live console visualizer for VAD and DoA tracking
-    └── test_beamformer_integration.py # Real-time multi-channel live beamforming runner
+    ├── unittest_AudioStreamer.py     # Unit tests for hardware buffer slicing
+    ├── unittest_localizer_level1.py  # 17 unit tests for SRP geometry, synthetic DoA & 3 sources
+    ├── unittest_localizer_level2.py  # Visual diagnostic dashboard (Cartesian + Polar plots)
+    ├── unittest_beamformer.py        # Unit tests for DAS steering, Wiener mask & COLA slicing
+    ├── unittest_speaker_verifier.py  # Unit tests & latency benchmarks for ECAPA-TDNN
+    ├── unittest_enroll_doctor.py     # Tests for profile loading, saving & duration checks
+    └── test_phat_vs_clean.py         # Comparative benchmark between classic SRP-PHAT and SRP-CLEAN
 ```
 
 ---
 
-## 4. Quick Start & Usage Examples
+## 4. Verification & Testing
 
-### 4.1. Processing a Multi-Channel Chunk with Doctor Verification
-
-```python
-import numpy as np
-from src.dsp.source.vad import SileroVAD
-from src.dsp.source.localizer import SRPLocalizer
-from src.dsp.source.beamformer import DASBeamformer
-from src.dsp.source.speaker_verifier import SpeakerVerifier
-
-# Initialize DSP pipeline components
-vad = SileroVAD(sample_rate=16000, threshold=0.50)
-localizer = SRPLocalizer(sample_rate=16000, radius=0.04625)
-beamformer = DASBeamformer(sample_rate=16000, radius=0.04625)
-verifier = SpeakerVerifier(similarity_threshold=0.65)
-
-# Enroll Doctor's voice at session start (e.g. from 3s calibration clip)
-# doctor_embedding = verifier.extract_embedding(doctor_enrollment_audio)
-doctor_embedding = np.zeros(192, dtype=np.float32)
-
-# Assume multi_channel_chunk has shape (6, 8000), float32 [-1.0, 1.0]
-multi_channel_chunk = np.zeros((6, 8000), dtype=np.float32)
-
-# Gate 1: Check voice activity (Window Voting >= 3)
-if vad.is_speech_active(multi_channel_chunk):
-    # Gate 2: Localize speaker angles
-    speaker_angles, power_profile = localizer.localize(multi_channel_chunk)
-    
-    if speaker_angles:
-        # Module 3: Steer beam(s) with multi-beam Soft Wiener cross-talk suppression
-        clean_streams = beamformer.beamform(
-            multi_channel_chunk, 
-            target_angles=speaker_angles,
-            apply_wiener_mask=True
-        )
-        
-        # Gate 4: Verify which stream belongs to the Lead Doctor
-        for angle, stream in zip(speaker_angles, clean_streams):
-            is_doctor, sim_score = verifier.verify(stream, doctor_embedding)
-            if is_doctor:
-                print(f"Doctor detected at {angle}° (score: {sim_score:.2f}) -> Route to ASR")
-            else:
-                print(f"Other voice at {angle}° (score: {sim_score:.2f}) -> Suppressed")
-```
-
-### 4.2. Running Live Hardware Stream on Raspberry Pi 4
-
-To run the full end-to-end capture and beamforming pipeline on hardware:
+The test suite runs entirely without hardware dependencies using synthetic far-field acoustic wave simulation:
 
 ```bash
-# Verify ReSpeaker 6-mic device presence
-arecord -l
+# Run the complete DSP unit test suite (34/34 passing)
+pytest src/dsp/test/unittest_localizer_level1.py src/dsp/test/unittest_beamformer.py src/dsp/test/unittest_AudioStreamer.py -v
 
-# Run real-time streaming pipeline
-python src/dsp/test/test_beamformer_integration.py
+# Run Level 2 visual diagnostic dashboard (saves plot to data/dsp/output/srp_diagnostic_dashboard.png)
+python3 src/dsp/test/unittest_localizer_level2.py
+
+# Test ECAPA-TDNN speaker verification
+pytest src/dsp/test/unittest_speaker_verifier.py -v
 ```
 
 ---
 
-## 5. Verification & Unit Testing
+## 5. Running on Raspberry Pi 4
 
-All algorithms feature hardware-free unit tests utilizing synthetic far-field broadband acoustic sources to verify geometric steering equations, frequency phase alignments, masking bounds, and biometrics.
+1. **Calibrate Microphone Gain (AlsaMixer):**
+   ```bash
+   alsamixer
+   # Press F6 -> Select 'seeed-8mic-voicecard'
+   # Set capture levels to 40% - 50% to prevent digital clipping (Peak < 20,000)
+   sudo alsactl store && sudo alsactl store -f /etc/voicecard/ac108_6mic.state
+   ```
 
-Run the test suite using `pytest`:
-
-```bash
-# Run all unit tests for the DSP package
-pytest src/dsp/test/unittest_*.py -v
-
-# Run individual test suites
-pytest src/dsp/test/unittest_VAD.py -v
-pytest src/dsp/test/unittest_localizer_level1.py -v
-pytest src/dsp/test/unittest_localizer_level2.py -v
-pytest src/dsp/test/unittest_beamformer.py -v
-python src/dsp/test/unittest_speaker_verifier.py
-```
-
+2. **Execute Live Pipeline:**
+   ```bash
+   python3 src/dsp/source/run_pipeline.py
+   ```
+   * *If no profile exists:* Speak for 3.5 seconds to enroll your voice.
+   * *During operation:* The terminal outputs live real-time telemetry (peak volume meter, detected angles, beam streams, doctor verification score, and latency).
+   * *Exit:* Press `Ctrl+C` to cleanly exit and save output WAV files.
