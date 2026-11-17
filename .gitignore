@@ -67,3 +67,12 @@ artifacts/
 *.7z
 
 .agents/
+
+# Machine learning model weights
+*.pt
+
+# Simulator & test debug artifacts
+MUJOCO_LOG.TXT
+sim_*.jpg
+sim_*.png
+

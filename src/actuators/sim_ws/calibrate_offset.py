@@ -18,6 +18,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
 try:
     import rtde_receive
 except ImportError:
@@ -97,9 +100,48 @@ def main():
     dy = round(pose_grip[1] - pose_cam[1], 5)
     dz = round(pose_grip[2] - pose_cam[2], 5)
 
-    drx_deg = round((pose_grip[3] - pose_cam[3]) * 57.2957795, 2)
-    dry_deg = round((pose_grip[4] - pose_cam[4]) * 57.2957795, 2)
-    drz_deg = round((pose_grip[5] - pose_cam[5]) * 57.2957795, 2)
+    # 6-DOF Hand-Eye Kinematics: T_tcp_cam
+    r_base_tcp1 = R.from_rotvec(pose_cam[3:6])
+    R_base_tcp1 = r_base_tcp1.as_matrix()
+    t_base_tcp1 = np.array(pose_cam[:3])
+    p_base_dot = np.array(pose_grip[:3])
+    d_z = float(pose_cam[2] - pose_grip[2])
+
+    # Right-handed camera orientation in base frame at overhead scan pose:
+    # Cam +X (image right) -> Base +X
+    # Cam +Y (image down)  -> Base -Y
+    # Cam +Z (optical depth) -> Base -Z (pointing down to table)
+    R_base_cam1 = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0],
+    ])
+    R_tcp_cam = R_base_tcp1.T @ R_base_cam1
+    p_tcp_dot = R_base_tcp1.T @ (p_base_dot - t_base_tcp1)
+    t_tcp_cam = p_tcp_dot - R_tcp_cam @ np.array([0.0, 0.0, d_z])
+    t_tcp_cam[2] = 0.0  # Coplanar with tool flange/TCP plane
+
+    T_tcp_cam = np.eye(4)
+    T_tcp_cam[:3, :3] = R_tcp_cam
+    T_tcp_cam[:3, 3] = t_tcp_cam
+    rotvec_tcp_cam = R.from_matrix(R_tcp_cam).as_rotvec()
+
+    # Orientation difference between camera pose and gripper pose
+    r_grip = R.from_rotvec(pose_grip[3:6])
+    r_rel = r_base_tcp1.inv() * r_grip
+    euler_diff_deg = r_rel.as_euler("xyz", degrees=True)
+    drx_deg = round(float(euler_diff_deg[0]), 2)
+    dry_deg = round(float(euler_diff_deg[1]), 2)
+    drz_deg = round(float(euler_diff_deg[2]), 2)
+
+    # Preserve existing configuration elements (e.g. exclusion polygon)
+    existing_data = {}
+    if OUTPUT_FILE.exists():
+        try:
+            with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+        except Exception:
+            pass
 
     result = {
         "translation_offset_m": {
@@ -122,6 +164,31 @@ def main():
             "camera_joints": q_cam,
             "gripper_tcp": pose_grip,
             "gripper_joints": q_grip,
+        },
+        "hand_eye_transform_tcp_to_cam": {
+            "matrix_4x4": np.round(T_tcp_cam, 6).tolist(),
+            "rotation_matrix": np.round(R_tcp_cam, 6).tolist(),
+            "rotation_rotvec": np.round(rotvec_tcp_cam, 6).tolist(),
+            "translation_m": np.round(t_tcp_cam, 6).tolist(),
+            "translation_mm": np.round(t_tcp_cam * 1000.0, 2).tolist(),
+        },
+        "gripper_exclusion_polygon": existing_data.get(
+            "gripper_exclusion_polygon",
+            [
+                [0.40, 1.00],
+                [0.40, 0.82],
+                [0.43, 0.74],
+                [0.60, 0.57],
+                [0.74, 0.56],
+                [0.93, 0.63],
+                [1.00, 0.68],
+                [1.00, 1.00],
+            ],
+        ),
+        "notes": {
+            "calibrated_scan_height_tcp_z_m": pose_cam[2],
+            "table_contact_height_tcp_z_m": pose_grip[2],
+            "usage_warning": "Full 6-DOF Hand-Eye matrix ensures rotation-invariant and height-invariant coordinate projections across arbitrary tray positions.",
         },
         "calibrated_at": datetime.now(timezone.utc).isoformat(),
     }

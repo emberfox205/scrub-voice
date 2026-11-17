@@ -27,12 +27,16 @@ for p in (src_dir, repo_root):
         sys.path.insert(0, p)
 
 import jsonschema
+import pytest
 import torch
 
 try:
     import psutil
 except ImportError:
     psutil = None
+
+MODEL_WEIGHTS_FILE = os.path.join(src_dir, "nlu", "models", "setfit_bge-micro-v2_8k", "model.safetensors")
+HAS_MODEL_WEIGHTS = os.path.isfile(MODEL_WEIGHTS_FILE)
 
 try:
     from nlu.pipeline import VoiceToIntentPipeline
@@ -47,6 +51,7 @@ def get_process_memory_mb(proc) -> float:
     return proc.memory_info().rss / (1024.0 * 1024.0)
 
 
+@pytest.mark.skipif(not HAS_MODEL_WEIGHTS, reason="SetFit model.safetensors weights missing (see docs/ASSEMBLE_V1_INTEGRATION_REPORT.md)")
 def test_pipeline(num_threads: int = 1, pin_single_core: bool = False):
     proc = psutil.Process(os.getpid()) if psutil else None
 

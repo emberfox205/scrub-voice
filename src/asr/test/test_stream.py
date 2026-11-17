@@ -64,10 +64,11 @@ class UtteranceStreamTest(unittest.TestCase):
     def test_gap_starts_a_new_utterance(self):
         self.stream.feed(chunk(), 100.0)
         self.stream.feed(chunk(), 100.5)
-        [first] = self.stream.feed(chunk(), 102.0)  # chunks 101.0 and 101.5 had no speech
+        # Expected next chunk was 101.0; with gap_tolerance_s=1.5s, a chunk at 103.0 (> 102.5) triggers a gap split
+        [first] = self.stream.feed(chunk(), 103.0)
         self.assertAlmostEqual(first.segment_start, 100.3)
         second = self.stream.end_utterance()
-        self.assertAlmostEqual(second.segment_start, 102.3)
+        self.assertAlmostEqual(second.segment_start, 103.3)
         self.assertEqual([len(a) for a in self.engine.calls], [2 * CHUNK, CHUNK])
 
     def test_timestamp_jitter_is_not_a_gap(self):
@@ -89,7 +90,8 @@ class UtteranceStreamTest(unittest.TestCase):
         self.stream.feed(chunk(), 100.0)
         self.assertEqual(self.stream.end_utterance().end_reason, "dsp_end")
         self.stream.feed(chunk(), 101.0)
-        [gap] = self.stream.feed(chunk(), 103.0)
+        # Expected next was 101.5; feeding at 103.5 (> 103.0) triggers gap
+        [gap] = self.stream.feed(chunk(), 103.5)
         self.assertEqual(gap.end_reason, "gap")
         self.assertEqual(self.stream.end_utterance("timeout").end_reason, "timeout")
         stream = UtteranceStream(self.engine, max_utterance_s=1.0)

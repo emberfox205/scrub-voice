@@ -28,6 +28,33 @@
   },
   "tray_pose": {
     "joints_rad": [
+      0.7551,
+      -1.1639,
+      1.5082,
+      -1.9157,
+      -1.5761,
+      -0.9827
+    ],
+    "joints_deg": [
+      43.26,
+      -66.69,
+      86.41,
+      -109.76,
+      -90.3,
+      -56.31
+    ],
+    "tcp_pose": [
+      -0.5386,
+      -0.7473,
+      0.2523,
+      0.26751,
+      -3.13018,
+      0.0
+    ],
+    "updated_at": "2026-10-27T08:37:38.949284+00:00"
+  },
+  "sim_tray_pose": {
+    "joints_rad": [
       -0.3361,
       -1.7783,
       2.1912,
@@ -106,5 +133,117 @@
       0.582
     ],
     "updated_at": "2026-10-13T07:48:50.093654+00:00"
+  },
+  "tray_contact_pose": {
+    "joints_rad": [
+      0.7549,
+      -1.0496,
+      1.6384,
+      -2.1601,
+      -1.5762,
+      -0.9836
+    ],
+    "joints_deg": [
+      43.25,
+      -60.14,
+      93.87,
+      -123.77,
+      -90.31,
+      -56.36
+    ],
+    "tcp_pose": [
+      -0.5338,
+      -0.745,
+      0.0151,
+      0.2645,
+      -3.1303,
+      0.0001
+    ],
+    "note": "Backward-compatible alias for padded_contact_pose (calibrated padded tray surface datum Z = +0.0151 m).",
+    "updated_at": "2026-11-10T08:09:45.179056+00:00"
+  },
+  "tray_touch_pose": {
+    "joints_rad": [
+      0.7549,
+      -1.0496,
+      1.6384,
+      -2.1601,
+      -1.5762,
+      -0.9836
+    ],
+    "joints_deg": [
+      43.25,
+      -60.14,
+      93.87,
+      -123.77,
+      -90.31,
+      -56.36
+    ],
+    "tcp_pose": [
+      -0.5338,
+      -0.745,
+      0.0151,
+      0.2645,
+      -3.1303,
+      0.0001
+    ],
+    "note": "Backward-compatible alias for padded_contact_pose: calibrated padded tray surface datum (Z = +0.0151 m).",
+    "updated_at": "2026-11-10T08:09:45.179056+00:00"
+  },
+  "table_contact_pose": {
+    "joints_rad": [
+      0.7549,
+      -1.0333,
+      1.6488,
+      -2.1869,
+      -1.5762,
+      -0.9837
+    ],
+    "joints_deg": [
+      43.25,
+      -59.2,
+      94.47,
+      -125.3,
+      -90.31,
+      -56.36
+    ],
+    "tcp_pose": [
+      -0.5338,
+      -0.745,
+      -0.0025,
+      0.2646,
+      -3.1303,
+      0.0002
+    ],
+    "note": "Calibrated rigid optical table surface contact height (Z = -0.0025 m). Serves as the absolute emergency kinematic safety floor limit.",
+    "updated_at": "2026-11-10T08:07:56.895322+00:00"
+  },
+  "padded_contact_pose": {
+    "joints_rad": [
+      0.7549,
+      -1.0496,
+      1.6384,
+      -2.1601,
+      -1.5762,
+      -0.9836
+    ],
+    "joints_deg": [
+      43.25,
+      -60.14,
+      93.87,
+      -123.77,
+      -90.31,
+      -56.36
+    ],
+    "tcp_pose": [
+      -0.5338,
+      -0.745,
+      0.0151,
+      0.2645,
+      -3.1303,
+      0.0001
+    ],
+    "note": "Calibrated padded tray surface contact datum (Z = +0.0151 m), recorded with RG-2 fingers nearly closed (w ≈ 0 mm).",
+    "updated_at": "2026-11-10T08:09:45.179056+00:00"
   }
 }

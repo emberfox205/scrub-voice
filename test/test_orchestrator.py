@@ -15,7 +15,6 @@ topic routing, and strict Dual-Channel priority preemption where
 emergency commands bypass normal queued commands.
 """
 
-import json
 import sys
 import time
 import unittest

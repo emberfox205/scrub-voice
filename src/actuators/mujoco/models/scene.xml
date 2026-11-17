@@ -94,6 +94,16 @@
     <mesh file="rg2/assets/RG2_RightTrussArm_vis.STL" name="r_truss_vis"/>
     <mesh file="rg2/assets/RG2_RightTrussArm_col.STL" name="r_truss_col"/>
 
+    <!-- Surgical Tools Meshes -->
+    <mesh file="assets/kitchen_scissors.obj" name="kitchen_scissors_mesh"/>
+    <mesh file="assets/kitchen_scissors_blades.obj" name="kitchen_scissors_blades_mesh"/>
+    <mesh file="assets/kitchen_scissors_handles.obj" name="kitchen_scissors_handles_mesh"/>
+    <mesh file="assets/picknik_ur_camera_adapter_vis.obj" name="camera_adapter_vis"/>
+    <mesh file="assets/picknik_ur_camera_adapter_col.stl" name="camera_adapter_col"/>
+    <mesh file="assets/surgical_scissors_blades.obj" name="surgical_scissors_blades_mesh"/>
+    <mesh file="assets/surgical_scissors_handles.obj" name="surgical_scissors_handles_mesh"/>
+    <mesh file="assets/surgical_scalpel.obj" name="surgical_scalpel_mesh"/>
+
     <!-- Materials -->
     <material class="ur10e" name="black" rgba="0.033 0.033 0.033 1"/>
     <material class="ur10e" name="jointgray" rgba="0.278 0.278 0.278 1"/>
@@ -106,46 +116,60 @@
     <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
     <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
-    <material name="table_mat" rgba="0.82 0.84 0.86 1" specular="0.6" shininess="0.5"/>
+    <material name="table_mat" rgba="0.015 0.16 0.35 1" specular="0.1" shininess="0.1"/>
     <material name="cart_legs" rgba="0.3 0.3 0.35 1" specular="0.6" shininess="0.5"/>
-    <material name="tray_mat" rgba="0.75 0.78 0.82 1" specular="0.8" shininess="0.8"/>
-    <material name="scalpel_handle_mat" rgba="0.2 0.4 0.8 1" specular="0.4" shininess="0.3"/>
+    <material name="tray_mat" rgba="0.015 0.16 0.35 1" specular="0.1" shininess="0.1"/>
+    <material name="scalpel_handle_mat" rgba="0.88 0.88 0.90 1" specular="0.8" shininess="0.8"/>
     <material name="steel_mat" rgba="0.9 0.9 0.92 1" specular="0.9" shininess="0.9"/>
+    <material name="scissors_handle_mat" rgba="0.85 0.15 0.15 1" specular="0.4" shininess="0.3"/>
+    <material name="scissors_steel" rgba="0.85 0.85 0.88 1" specular="0.9" shininess="0.9"/>
   </asset>
 
   <visual>
-    <headlight ambient="0.4 0.4 0.4" diffuse="0.7 0.7 0.7" specular="0.2 0.2 0.2"/>
+    <headlight ambient="0.45 0.45 0.45" diffuse="0.45 0.45 0.45" specular="0.1 0.1 0.1"/>
     <global azimuth="120" elevation="-20"/>
   </visual>
 
   <worldbody>
-    <light pos="0 0 2.5" dir="0 0 -1" directional="true"/>
-    <light pos="-1 1 2.5" dir="0.5 -0.5 -1" diffuse="0.5 0.5 0.5" directional="true"/>
+    <light pos="0 0 2.5" dir="0 0 -1" diffuse="0.45 0.45 0.45" directional="true" castshadow="false"/>
+    <light pos="-1 1 2.5" dir="0.5 -0.5 -1" diffuse="0.4 0.4 0.4" directional="true" castshadow="false"/>
 
     <!-- Floor Plane -->
     <geom name="floor" type="plane" size="5 5 0.05" material="groundplane"/>
 
     <!-- Surgical Instrument Trolley / Cart standing at tray_pose reach -->
-    <body name="instrument_trolley" pos="-0.58 0.065 0.0">
-      <geom type="box" size="0.20 0.16 0.01" pos="0 0 0.065" material="table_mat"/>
-      <geom type="cylinder" size="0.015 0.03" pos="-0.16 -0.12 0.03" material="cart_legs"/>
-      <geom type="cylinder" size="0.015 0.03" pos="0.16 -0.12 0.03" material="cart_legs"/>
-      <geom type="cylinder" size="0.015 0.03" pos="-0.16 0.12 0.03" material="cart_legs"/>
-      <geom type="cylinder" size="0.015 0.03" pos="0.16 0.12 0.03" material="cart_legs"/>
+    <body name="instrument_trolley" pos="-0.5765 -0.7287 0.0">
+      <geom type="cylinder" size="0.015 0.00155" pos="-0.16 -0.12 0.00155" material="cart_legs"/>
+      <geom type="cylinder" size="0.015 0.00155" pos="0.16 -0.12 0.00155" material="cart_legs"/>
+      <geom type="cylinder" size="0.015 0.00155" pos="-0.16 0.12 0.00155" material="cart_legs"/>
+      <geom type="cylinder" size="0.015 0.00155" pos="0.16 0.12 0.00155" material="cart_legs"/>
+      <geom type="box" size="0.20 0.16 0.004" pos="0 0 0.0071" material="table_mat"/>
 
-      <!-- Surgical Tray on trolley -->
-      <geom type="box" size="0.16 0.12 0.005" pos="0 0 0.075" material="tray_mat"/>
-      <geom type="box" size="0.16 0.005 0.012" pos="0 0.115 0.082" material="tray_mat"/>
-      <geom type="box" size="0.16 0.005 0.012" pos="0 -0.115 0.082" material="tray_mat"/>
-      <geom type="box" size="0.005 0.12 0.012" pos="0.155 0 0.082" material="tray_mat"/>
-      <geom type="box" size="0.005 0.12 0.012" pos="-0.155 0 0.082" material="tray_mat"/>
+      <!-- Surgical Tray on trolley (tray floor matched to padded_contact_pose Z = +0.0151 m) -->
+      <geom name="tray_floor" type="box" size="0.16 0.12 0.002" pos="0 0 0.0131" material="tray_mat"/>
+      <geom type="box" size="0.16 0.004 0.004" pos="0 0.116 0.0151" material="tray_mat"/>
+      <geom type="box" size="0.16 0.004 0.004" pos="0 -0.116 0.0151" material="tray_mat"/>
+      <geom type="box" size="0.004 0.12 0.004" pos="0.156 0 0.0151" material="tray_mat"/>
+      <geom type="box" size="0.004 0.12 0.004" pos="-0.156 0 0.0151" material="tray_mat"/>
     </body>
 
-    <!-- Scalpel in tray -->
-    <body name="scalpel" pos="-0.58 0.045 0.095">
+    <!-- Kitchen / Surgical Scissors in tray (resting flush on padded tray floor Z = +0.0151 m) -->
+    <body name="scissors" pos="-0.630 -0.7287 0.0219">
+      <freejoint name="scissors_joint"/>
+      <geom name="scissors_blades_vis" type="mesh" mesh="surgical_scissors_blades_mesh" material="scissors_steel" contype="0" conaffinity="0" group="2"/>
+      <geom name="scissors_handles_vis" type="mesh" mesh="surgical_scissors_handles_mesh" material="scissors_handle_mat" contype="0" conaffinity="0" group="2"/>
+      <geom class="tool" name="scissors_shank" type="cylinder" size="0.007 0.008" pos="0 0 0" quat="0.7071 0.7071 0 0" group="3" material="scissors_steel" mass="0.05"/>
+      <geom class="tool" name="scissors_blade_col" type="box" size="0.004 0.040 0.004" pos="0 0.045 0" group="3" material="scissors_steel" mass="0.03"/>
+      <geom class="tool" name="scissors_handle_col" type="box" size="0.025 0.035 0.005" pos="0 -0.045 0" group="3" material="scissors_handle_mat" mass="0.03"/>
+    </body>
+
+    <!-- Scalpel resting alongside in tray (parallel with lateral clearance, resting at Z = +0.0151 m) -->
+    <body name="scalpel" pos="-0.520 -0.7287 0.0155">
       <freejoint name="scalpel_joint"/>
-      <geom class="tool" name="scalpel_handle" type="cylinder" size="0.006 0.055" pos="0 -0.02 0" quat="0.707 0.707 0 0" material="scalpel_handle_mat" mass="0.05"/>
-      <geom class="tool" name="scalpel_blade" type="box" size="0.001 0.02 0.008" pos="0 0.045 0" material="steel_mat" mass="0.01"/>
+      <!-- Authentic NVIDIA SimReady Scalpel Mesh (from dataset nvidia/simready-assets) -->
+      <geom name="scalpel_vis" type="mesh" mesh="surgical_scalpel_mesh" material="steel_mat" quat="0.7071 0 0 -0.7071" contype="0" conaffinity="0" group="2"/>
+      <geom class="tool" name="scalpel_handle" type="box" size="0.0055 0.045 0.0015" pos="0 -0.025 0.0015" material="steel_mat" mass="0.04"/>
+      <geom class="tool" name="scalpel_blade" type="box" size="0.0025 0.025 0.0010" pos="0 0.045 0.0015" material="steel_mat" mass="0.01"/>
     </body>
 
     <!-- Overview Camera View -->
@@ -211,25 +235,58 @@
                   <geom class="eef_collision" pos="0 0.097 0" quat="1 1 0 0" size="0.046 0.02"/>
 
                   <!-- ============================================== -->
-                  <!-- AUTHENTIC ONROBOT RG-2 GRIPPER CAD ASSEMBLY    -->
+                  <!-- PICKNIK UR REALSENSE CAMERA ADAPTER BRACKET   -->
+                  <!-- Bolted flush to UR-10e tool flange (y = 0.1168)-->
                   <!-- ============================================== -->
-                  <body name="hand_link" pos="0 0.092 0" quat="0.7071 0 0 0.7071" childclass="rg2">
+                  <body name="camera_adapter_link" pos="0 0.1168 0" quat="0.7071 0 0 0.7071">
+                    <!-- CAMERA HOLDER (Rotated 180 deg around UR-10e tool flange axis) -->
+                    <!-- Shifts camera mount to Z=-0.067m and flips orientation by 180 deg -->
+                    <body name="camera_holder" pos="0 0 0" quat="0 1 0 0">
+                      <!-- PickNik Camera Adapter Bracket Geometry -->
+                      <geom name="camera_adapter_vis" type="mesh" mesh="camera_adapter_vis" material="black" contype="0" conaffinity="0" group="2"/>
+                      <geom name="camera_adapter_col" type="mesh" mesh="camera_adapter_col" group="3"/>
+
+                      <!-- RealSense D435 Camera Body Housing (90mm x 25mm x 25mm) -->
+                      <geom name="realsense_chassis" type="box" size="0.0125 0.045 0.0125" pos="0.007 0 0.067" quat="0.9986 0 0.0523 0" material="rg2_aluminum" contype="0" conaffinity="0" group="2"/>
+                      <geom name="realsense_glass" type="box" size="0.001 0.042 0.010" pos="0.0195 0 0.0657" quat="0.9986 0 0.0523 0" rgba="0.08 0.08 0.1 1" contype="0" conaffinity="0" group="2"/>
+                      <geom name="realsense_rgb_lens" type="cylinder" size="0.0035 0.0015" pos="0.0205 0.015 0.0656" quat="0.7061 0 0.7061 0.037" rgba="0.1 0.5 0.9 1" contype="0" conaffinity="0" group="2"/>
+                      <geom name="realsense_ir_left" type="cylinder" size="0.003 0.0015" pos="0.0205 -0.025 0.0656" quat="0.7061 0 0.7061 0.037" rgba="0.2 0.25 0.3 1" contype="0" conaffinity="0" group="2"/>
+                      <geom name="realsense_ir_right" type="cylinder" size="0.003 0.0015" pos="0.0205 0.035 0.0656" quat="0.7061 0 0.7061 0.037" rgba="0.2 0.25 0.3 1" contype="0" conaffinity="0" group="2"/>
+
+                      <!-- RealSense D435 camera sensor: 6 deg bent toward TCP, oriented with gripper at bottom-right -->
+                      <camera name="wrist_realsense" pos="0.0171 0.050 0.067" fovy="58" xyaxes="0 -1 0 0.1045 0 0.9945"/>
+
+                      <!-- Visual Orientation Indicators on Camera Top Plate -->
+                      <!-- Red Axis: Camera Image Right (+X) -->
+                      <geom name="cam_ind_x_axis" type="cylinder" size="0.002 0.020" pos="0.005 -0.022 0.088" quat="0.7071 -0.7071 0 0" rgba="1.0 0.15 0.15 0.95" contype="0" conaffinity="0" group="2"/>
+                      <!-- Green Axis: Camera Sensor Down (+Y) -->
+                      <geom name="cam_ind_y_axis" type="cylinder" size="0.002 0.012" pos="0.005 0.0 0.098" quat="-0.0523 0 0.9986 0" rgba="0.15 0.95 0.15 0.95" contype="0" conaffinity="0" group="2"/>
+                      <!-- Blue Axis: Camera Optical Forward Sight Direction (Tilted 6 deg toward TCP) -->
+                      <geom name="cam_ind_z_axis" type="cylinder" size="0.0025 0.012" pos="0.005 0.0 0.088" quat="0.6691 0 0.7431 0" rgba="0.15 0.55 1.0 0.95" contype="0" conaffinity="0" group="2"/>
+                      <geom name="cam_ind_z_tip" type="sphere" size="0.004" pos="0.015 0.0 0.087" rgba="0.15 0.55 1.0 0.95" contype="0" conaffinity="0" group="2"/>
+
+                      <!-- Coordinate Frame Site for MuJoCo Viewer Frame Visualization -->
+                      <site name="wrist_realsense_frame" pos="0.0171 0.050 0.067" xyaxes="0 -1 0 0.1045 0 0.9945" size="0.006" rgba="0.1 0.8 1.0 0.8" group="4"/>
+                    </body>
+
+                    <!-- AUTHENTIC ONROBOT RG-2 GRIPPER CAD ASSEMBLY (Mounted to adapter flange +7mm) -->
+                    <body name="hand_link" pos="0.007 0 0" childclass="rg2">
                     <inertial mass="1.68" pos="0.06 0 0" diaginertia="0.00086 0.0024 0.0026"/>
                     <geom type="mesh" mesh="hand_vis" material="rg2_chassis"/>
-                    <geom class="rg2_col" type="mesh" mesh="hand_col"/>
+                    <geom name="hand_col" class="rg2_col" type="mesh" mesh="hand_col"/>
 
                     <!-- Left Moment Arm -->
                     <body name="l_moment_arm_link" pos="0.105 0.017 0.010">
                       <inertial mass="0.16" pos="0.017 -0.006 0" diaginertia="0.000023 0.000072 0.000083"/>
                       <joint name="gripper_joint" range="-0.45 0.9"/>
                       <geom type="mesh" mesh="l_moment_vis" material="rg2_aluminum"/>
-                      <geom class="rg2_col" type="mesh" mesh="l_moment_col"/>
+                      <geom name="l_moment_col" class="rg2_col" type="mesh" mesh="l_moment_col"/>
 
                       <body name="l_finger_link" pos="0.049 0.026 0.000">
                         <inertial mass="0.08" pos="0.025 -0.01 0" diaginertia="0.000006 0.000025 0.000026"/>
                         <joint name="l_finger_2_joint" range="-0.9 0.45"/>
                         <geom type="mesh" mesh="l_finger_vis" material="rg2_aluminum"/>
-                        <geom class="rg2_col" type="mesh" mesh="l_finger_col"/>
+                        <geom name="l_finger_col" class="rg2_col" type="mesh" mesh="l_finger_col"/>
                       </body>
                     </body>
 
@@ -238,7 +295,7 @@
                       <inertial mass="0.066" pos="0.023 0.012 0" diaginertia="0.000010 0.000024 0.000025"/>
                       <joint name="l_finger_passive_joint" range="-0.45 0.9"/>
                       <geom type="mesh" mesh="l_truss_vis" material="rg2_aluminum"/>
-                      <geom class="rg2_col" type="mesh" mesh="l_truss_col"/>
+                      <geom name="l_truss_col" class="rg2_col" type="mesh" mesh="l_truss_col"/>
                     </body>
 
                     <!-- Right Moment Arm -->
@@ -246,13 +303,13 @@
                       <inertial mass="0.16" pos="0.017 0.006 0" diaginertia="0.000023 0.000072 0.000083"/>
                       <joint name="r_finger_1_joint" range="-0.9 0.45"/>
                       <geom type="mesh" mesh="r_moment_vis" material="rg2_aluminum"/>
-                      <geom class="rg2_col" type="mesh" mesh="r_moment_col"/>
+                      <geom name="r_moment_col" class="rg2_col" type="mesh" mesh="r_moment_col"/>
 
                       <body name="r_finger_link" pos="0.049 -0.026 0.000">
                         <inertial mass="0.08" pos="0.025 0.01 0" diaginertia="0.000006 0.000025 0.000026"/>
                         <joint name="r_finger_2_joint" range="-0.45 0.9"/>
                         <geom type="mesh" mesh="r_finger_vis" material="rg2_aluminum"/>
-                        <geom class="rg2_col" type="mesh" mesh="r_finger_col"/>
+                        <geom name="r_finger_col" class="rg2_col" type="mesh" mesh="r_finger_col"/>
                       </body>
                     </body>
 
@@ -261,11 +318,12 @@
                       <inertial mass="0.066" pos="0.023 -0.012 0" diaginertia="0.000010 0.000024 0.000025"/>
                       <joint name="r_finger_passive_joint" range="-0.9 0.45"/>
                       <geom type="mesh" mesh="r_truss_vis" material="rg2_aluminum"/>
-                      <geom class="rg2_col" type="mesh" mesh="r_truss_col"/>
+                      <geom name="r_truss_col" class="rg2_col" type="mesh" mesh="r_truss_col"/>
                     </body>
 
-                    <!-- Gripper TCP Site -->
-                    <site name="rg2_tcp" pos="0.20 0 0.01" size="0.008" rgba="1 0.2 0.2 0.8"/>
+                      <!-- Gripper TCP Site calibrated at RG-2 fingertips -->
+                      <site name="rg2_tcp" pos="0.20 -0.00195 0.00451" quat="0.499596 -0.499753 0.498662 -0.501983" size="0.004" rgba="1 0.2 0.2 0.8" group="4"/>
+                    </body>
                   </body>
                   <!-- End of RG-2 Gripper Assembly -->
 
@@ -288,7 +346,13 @@
   </equality>
 
   <contact>
+    <exclude body1="wrist_3_link" body2="camera_adapter_link"/>
+    <exclude body1="camera_adapter_link" body2="hand_link"/>
     <exclude body1="wrist_3_link" body2="hand_link"/>
+    <exclude body1="wrist_3_link" body2="camera_holder"/>
+    <exclude body1="camera_adapter_link" body2="camera_holder"/>
+    <exclude body1="camera_holder" body2="hand_link"/>
+    <exclude body1="scissors" body2="scalpel"/>
     <exclude body1="hand_link" body2="l_moment_arm_link"/>
     <exclude body1="hand_link" body2="l_truss_arm_link"/>
     <exclude body1="hand_link" body2="r_moment_arm_link"/>
@@ -300,6 +364,12 @@
     <exclude body1="r_moment_arm_link" body2="r_truss_arm_link"/>
     <exclude body1="r_moment_arm_link" body2="r_finger_link"/>
     <exclude body1="r_finger_link" body2="r_truss_arm_link"/>
+    <exclude body1="l_finger_link" body2="instrument_trolley"/>
+    <exclude body1="r_finger_link" body2="instrument_trolley"/>
+    <exclude body1="l_moment_arm_link" body2="instrument_trolley"/>
+    <exclude body1="r_moment_arm_link" body2="instrument_trolley"/>
+    <exclude body1="l_truss_arm_link" body2="instrument_trolley"/>
+    <exclude body1="r_truss_arm_link" body2="instrument_trolley"/>
   </contact>
 
   <actuator>

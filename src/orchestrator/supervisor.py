@@ -47,6 +47,7 @@ SERVICE_COLORS = {
     "NLU": f"{BOLD}{MAGENTA}",
     "ASR": f"{BOLD}{GREEN}",
     "DSP": f"{BOLD}{YELLOW}",
+    "ACTUATOR": f"{BOLD}\033[93m",
 }
 
 
@@ -55,6 +56,7 @@ READY_PATTERNS = {
     "NLU": ["awaiting utterances", "NLU Service Daemon started"],
     "ASR": ["Listening for DSP chunks"],
     "DSP": ["DSP active"],
+    "ACTUATOR": ["Actuator Service active"],
 }
 
 
@@ -87,6 +89,11 @@ class Supervisor:
         dsp_spatial: bool = True,
         nlu_threads: int = 2,
         silence_hangover_sec: float = 1.5,
+        enable_actuators: bool = False,
+        sim: bool = False,
+        headless: bool = True,
+        robot_ip: Optional[str] = None,
+        gripper_ip: Optional[str] = None,
     ) -> None:
         self.wav_path = wav_path
         self.device = device
@@ -100,13 +107,18 @@ class Supervisor:
         self.dsp_spatial = dsp_spatial
         self.nlu_threads = nlu_threads
         self.silence_hangover_sec = silence_hangover_sec
+        self.enable_actuators = enable_actuators
+        self.sim = sim
+        self.headless = headless
+        self.robot_ip = robot_ip
+        self.gripper_ip = gripper_ip
 
         self._running = False
         self._shutting_down = False
         self._lock = threading.Lock()
         self.services: Dict[str, ServiceSpec] = {}
         self.ready_events: Dict[str, threading.Event] = {
-            k: threading.Event() for k in ["MONITOR", "NLU", "ASR", "DSP"]
+            k: threading.Event() for k in ["MONITOR", "NLU", "ASR", "DSP", "ACTUATOR"]
         }
         self.all_ready_event = threading.Event()
 
@@ -178,6 +190,27 @@ class Supervisor:
                 name="DSP",
                 cmd=dsp_cmd,
                 respawn=not self.single_pass,
+                max_restarts=self.max_restarts,
+            )
+
+        # 5. ACTUATOR Service (optional or when sim/enable_actuators is True)
+        if self.enable_actuators or self.sim:
+            actuator_cmd = [
+                py_exec,
+                str(REPO_ROOT / "src" / "actuators" / "run_actuator_service.py"),
+            ]
+            if self.sim:
+                actuator_cmd.append("--sim")
+                if self.headless:
+                    actuator_cmd.append("--headless")
+            if self.robot_ip:
+                actuator_cmd.extend(["--robot-ip", self.robot_ip])
+            if self.gripper_ip:
+                actuator_cmd.extend(["--gripper-ip", self.gripper_ip])
+
+            self.services["ACTUATOR"] = ServiceSpec(
+                name="ACTUATOR",
+                cmd=actuator_cmd,
                 max_restarts=self.max_restarts,
             )
 
@@ -269,8 +302,11 @@ class Supervisor:
         self._log("SUPERVISOR", "🚀 Starting Scrub-Voice Intraoperative Edge Pipeline...")
         self._log("SUPERVISOR", "=" * 65)
 
-        # Staggered order: MONITOR -> NLU -> ASR -> DSP
-        start_order = ["MONITOR", "NLU", "ASR"]
+        # Staggered order: MONITOR -> ACTUATOR (if enabled) -> NLU -> ASR -> DSP
+        start_order = ["MONITOR"]
+        if "ACTUATOR" in self.services:
+            start_order.append("ACTUATOR")
+        start_order.extend(["NLU", "ASR"])
         if "DSP" in self.services and start_dsp:
             start_order.append("DSP")
 
@@ -278,7 +314,7 @@ class Supervisor:
             spec = self.services[name]
             self.start_service(spec)
             if wait_for_warmup:
-                timeout = 120.0 if name == "NLU" else 25.0
+                timeout = 120.0 if name == "NLU" else (30.0 if name == "ACTUATOR" else 25.0)
                 ready = self.wait_for_ready(name, timeout=timeout)
                 if not ready:
                     self._log("SUPERVISOR", f"Timed out waiting for {name} warmup ({timeout}s)", level="WARN")
@@ -359,14 +395,14 @@ class Supervisor:
 
             self._log("SUPERVISOR", "Terminating all child services...")
 
-            # Reverse order of startup: DSP -> ASR -> NLU -> MONITOR
-            shutdown_order = ["DSP", "ASR", "NLU", "MONITOR"]
+            # Reverse order of startup: DSP -> ASR -> NLU -> ACTUATOR -> MONITOR
+            shutdown_order = ["DSP", "ASR", "NLU", "ACTUATOR", "MONITOR"]
             for name in shutdown_order:
                 if name in self.services:
                     spec = self.services[name]
                     if spec.process and spec.process.poll() is None:
                         self._log("SUPERVISOR", f"Stopping service {name} (PID {spec.process.pid})...")
-                        t_wait = 4.0 if name == "DSP" else 2.0
+                        t_wait = 4.0 if name in ("DSP", "ACTUATOR") else 2.0
                         self.stop_service(spec, timeout=t_wait)
 
             # Cleanup IPC sockets in /tmp
@@ -403,6 +439,11 @@ def main():
     )
     parser.add_argument("--single-pass", action="store_true", help="Stop pipeline after one pass of the WAV file")
     parser.add_argument("--max-restarts", type=int, default=5, help="Maximum auto-restarts per service")
+    parser.add_argument("--enable-actuators", action="store_true", help="Start Actuator Service for robot/gripper execution")
+    parser.add_argument("--sim", action="store_true", help="Enable simulation mode for actuators")
+    parser.add_argument("--headless", action="store_true", default=True, help="Run simulation headless (default: True)")
+    parser.add_argument("--robot-ip", default=None, help="Physical UR10e robot IP")
+    parser.add_argument("--gripper-ip", default=None, help="Physical RG-2 gripper IP")
     args = parser.parse_args()
 
     supervisor = Supervisor(
@@ -418,6 +459,11 @@ def main():
         dsp_spatial=not args.no_spatial,
         nlu_threads=args.nlu_threads,
         silence_hangover_sec=args.silence_hangover_sec,
+        enable_actuators=args.enable_actuators,
+        sim=args.sim,
+        headless=args.headless,
+        robot_ip=args.robot_ip,
+        gripper_ip=args.gripper_ip,
     )
 
     def handle_sig(sig, frame):

@@ -42,7 +42,7 @@ Modern Raspberry Pi OS (Debian Bookworm) uses managed Python environments (`PEP 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install --upgrade pip
+pip install --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 ```
 
 ---
@@ -98,6 +98,25 @@ Type natural language commands in real time to verify intent classification and 
 ```bash
 python test/test_monitor_prompt.py
 ```
+
+### Option D: Dual-Terminal SSH Operator Workflow
+When connected to the Raspberry Pi over SSH, run the full pipeline in one terminal and control/monitor commands interactively in a second terminal:
+
+**Terminal 1 (Pipeline Supervisor & Daemons):**
+```bash
+# Starts Monitor, NLU, ASR, DSP, and persistent Actuator services
+python -m src.orchestrator.supervisor --enable-actuators
+```
+
+**Terminal 2 (Prompt Console & Operator Mode Control):**
+```bash
+# Direct tool command
+python test/test_monitor_prompt.py --pick-tool scalpel
+
+# Or interactive menu with operational mode switching ([M])
+python test/test_monitor_prompt.py
+```
+*Note: Ensure the arm is parked (`park_arm`) before switching operational modes from `TOOL_HANDLING` to `CAMERA_LIGHT`.*
 
 ---
 
